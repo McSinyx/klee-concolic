@@ -22,6 +22,8 @@
 
 namespace klee {
 
+extern llvm::cl::opt<bool> OutputLocalsOnError;
+
 extern llvm::cl::opt<bool> UseFastCexSolver;
 
 extern llvm::cl::opt<bool> UseCexCache;

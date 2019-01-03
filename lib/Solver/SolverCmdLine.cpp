@@ -25,6 +25,10 @@ using namespace llvm;
 
 namespace klee {
 
+cl::opt<bool> OutputLocalsOnError(
+    "output-locals-on-error", cl::init(false),
+    cl::desc("Output local values in *.err file (default=off)"));
+
 cl::extrahelp TimeFormatInfo(
     "\nTime format used by KLEE's options\n"
     "\n"
