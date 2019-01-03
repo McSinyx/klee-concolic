@@ -11,6 +11,7 @@
 #define KLEE_EXECUTIONSTATE_H
 
 #include "AddressSpace.h"
+#include "FunctionStateInfo.h"
 #include "MergeHandler.h"
 
 #include "klee/ADT/ImmutableSet.h"
@@ -20,6 +21,8 @@
 #include "klee/Module/KInstIterator.h"
 #include "klee/Solver/Solver.h"
 #include "klee/System/Time.h"
+
+#include "llvm/IR/DataLayout.h"
 
 #include <map>
 #include <memory>
@@ -44,6 +47,8 @@ struct StackFrame {
   CallPathNode *callPathNode;
 
   std::vector<const MemoryObject *> allocas;
+  std::map<const MemoryObject *, std::pair<ref<Expr>, ref<Expr>>> nonLocalsRead;
+  std::map<const MemoryObject *, std::pair<ref<Expr>, ref<Expr>>> nonLocalsWritten;
   Cell *locals;
 
   /// Minimum distance to an uncovered instruction once the function
@@ -240,10 +245,13 @@ public:
   /// @brief Disables forking for this state. Set by user code
   bool forkDisabled = false;
 
+  // Function state info
+  ref<FunctionStateInfo> functionStateInfo;
+
 public:
 #ifdef KLEE_UNITTEST
   // provide this function only in the context of unittests
-  ExecutionState() = default;
+  ExecutionState() : functionStateInfo(new FunctionStateInfo()) { };
 #endif
   // only to create the initial state
   explicit ExecutionState(KFunction *kf);
@@ -267,7 +275,20 @@ public:
   void addCexPreference(const ref<Expr> &cond);
 
   bool merge(const ExecutionState &b);
-  void dumpStack(llvm::raw_ostream &out) const;
+  void dumpStack(llvm::raw_ostream &out,
+                 llvm::DataLayout *dataLayout = 0) const;
+  void dumpFrame(llvm::raw_ostream &out, const StackFrame &sf,
+                 const KInstruction *target,
+                 llvm::DataLayout *dataLayout, bool onStack = false) const;
+  void dumpHandleType(llvm::raw_ostream &out, const std::string &prefix,
+                      const ObjectState *valueObjectState, llvm::Type *type,
+                      llvm::DataLayout *dataLayout) const;
+  void dumpHandleStructType(llvm::raw_ostream &out, const std::string &prefix,
+                            const ObjectState *valueObjectState,
+                            uint64_t initOffset, llvm::StructType *type,
+                            llvm::DataLayout *dataLayout) const;
+  void addStateInfoAsReturn(const KInstruction *target,
+                            llvm::DataLayout *dataLayout);
 
   std::uint32_t getID() const { return id; };
   void setID() { id = nextID++; };
