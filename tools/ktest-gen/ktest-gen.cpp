@@ -50,12 +50,15 @@ static void push_range(KTest *b, const char *name, unsigned value) {
 void print_usage_and_exit(char *program_name) {
   fprintf(stderr,
     "%s: Tool for generating a ktest file from concrete input, e.g., for using a concrete crashing input as a ktest seed.\n"
-    "Usage: %s <arguments>\n"
-    "       <arguments> are the command-line arguments of the program, with the following treated as special:\n"
+    "Usage: %s\n"
     "       --bout-file <filename>      - Specifying the output file name for the ktest file (default: file.bout).\n"
+    "       --sym-arg <arg>             - Specifying the command-line argument of the program.\n"
+    "       --sym-args <N> (<arg>)*     - Specifying the command-line arguments of the program\n"
     "       --sym-stdin <filename>      - Specifying a file that is the content of stdin (only once).\n"
     "       --sym-stdout <filename>     - Specifying a file that is the content of stdout (only once).\n"
     "       --sym-file <filename>       - Specifying a file that is the content of a file named A provided for the program (only once).\n"
+
+    "       --second-var <N> <id> <val> - Specifying a list of second order variables where N is the number of variables followed by each variable's identifier and value pair.\n"
     "   Ex: %s -o -p -q file1 --sym-stdin file2 --sym-file file3 --sym-stdout file4\n",
     program_name, program_name, program_name);
   exit(1);
@@ -121,20 +124,57 @@ int main(int argc, char *argv[]) {
         print_usage_and_exit(argv[0]);
 
       bout_file = argv[i];
-    } else {
-      long nbytes = strlen(argv[i]) + 1;
+    } else if (strcmp(argv[i], "--sym-args") == 0 ||
+               strcmp(argv[i], "-sym-args") == 0) {
+      int num_args = atoi(argv[++i]);
+      printf("\tIdentified %d arguments\n", num_args);
+
+      for (int k=0; k < num_args; k++) {
+        long nbytes = strlen(argv[++i]) + 1;
+        static int total_args = 0;
+
+        char arg[1024];
+        snprintf(arg, sizeof(arg), "arg%02d", total_args++);
+        push_obj(&b, (const char *)arg, nbytes, (unsigned char *)argv[i]);
+
+        char *buf1 = (char *)malloc(1024);
+        char *buf2 = (char *)malloc(1024);
+        strcpy(buf1, "-sym-arg");
+        snprintf(buf2, 1024, "%ld", nbytes - 1);
+        argv_copy[argv_copy_idx++] = buf1;
+        argv_copy[argv_copy_idx++] = buf2;
+      }
+    } else if (strcmp(argv[i], "--sym-arg") == 0 ||
+             strcmp(argv[i], "-sym-arg") == 0) {
+      printf("\tIdentified a argument\n");
+      long nbytes = strlen(argv[++i]) + 1;
       static int total_args = 0;
 
       char arg[1024];
-      snprintf(arg, sizeof(arg), "arg%02d", total_args++);
+      sprintf(arg, "arg0%d", total_args++);
       push_obj(&b, (const char *)arg, nbytes, (unsigned char *)argv[i]);
-
+      printf("\t\tName=%s, Size=%ld, Value=%s\n",arg, nbytes, argv[i]);
       char *buf1 = (char *)malloc(1024);
       char *buf2 = (char *)malloc(1024);
       strcpy(buf1, "-sym-arg");
-      snprintf(buf2, 1024, "%ld", nbytes - 1);
+      sprintf(buf2, "%ld", nbytes - 1);
       argv_copy[argv_copy_idx++] = buf1;
       argv_copy[argv_copy_idx++] = buf2;
+    } else if (strcmp(argv[i], "--second-var") == 0 ||
+               strcmp(argv[i], "-second-var") == 0) {
+      printf("\tIdentified a second order variable\n");
+      char name[1024];
+      char value[1024];
+      long nbytes = 0;
+      unsigned long read_value = 0;
+      sprintf(name, "%s", argv[++i]);
+      nbytes = atoi(argv[++i]);
+      read_value = atoi(argv[++i]);
+      printf("\t\tName=%s, Size=%ld, Value=%ld\n",name, nbytes, read_value);
+      for (int k = nbytes - 1; k >= 0; k--) {
+        value[k] = (read_value >> (8 * (k)) )& 0xFF;
+      }
+      push_obj(&b, (const char *)name, nbytes, (unsigned char *)value);
     }
   }
 
