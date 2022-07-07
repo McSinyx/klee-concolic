@@ -19,6 +19,7 @@
 #include "TimingSolver.h"
 
 #include "klee/Config/config.h"
+#include "klee/Expr/ExprSMTLIBPrinter.h"
 #include "klee/Module/KInstruction.h"
 #include "klee/Module/KModule.h"
 #include "klee/Solver/SolverCmdLine.h"
@@ -109,6 +110,7 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("klee_posix_prefer_cex", handlePosixPreferCex, false),
   add("klee_print_expr", handlePrintExpr, false),
   add("klee_print_range", handlePrintRange, false),
+  add("klee_print_stmt", handlePrintStatement, false),
   add("klee_set_forking", handleSetForking, false),
   add("klee_stack_trace", handleStackTrace, false),
   add("klee_warning", handleWarning, false),
@@ -555,6 +557,61 @@ void SpecialFunctionHandler::handlePosixPreferCex(ExecutionState &state,
     return handlePreferCex(state, target, arguments);
 }
 
+void SpecialFunctionHandler::trackTaint(ExecutionState &state,
+                                        KInstruction *target,
+                                        ref<Expr> value) {
+  std::string Str;
+  llvm::raw_string_ostream info(Str);
+  ExprSMTLIBPrinter printer;
+  printer.setOutput(info);
+  const ref<Expr> expr = value;
+  ExprSMTLIBPrinter::SMTLIB_SORT sort = printer.getSort(expr);
+  printer.printExpression(expr, sort);
+  //  printer.generateOutput();
+  std::string res = info.str();
+  std::string source_loc = target->getSourceLocation();
+  std::string type;
+
+  if (target->inst->getType()->isFloatTy() || target->inst->getType()->isDoubleTy()) {
+    type = "float";
+  } else  if (target->inst->getType()->isPointerTy()){
+    type = "pointer";
+  } else {
+    type = "integer";
+  }
+
+  if (source_loc.find("/klee", 0) == std::string::npos) {
+    std::string log_message = source_loc + " : " + type + " : " + res + "\n";
+    klee_log_taint("%s", log_message.c_str());
+  }
+}
+
+void SpecialFunctionHandler::trackMemory(ExecutionState &state, KInstruction *target,
+                                         ref<Expr> address,
+                                         ref<Expr> size) {
+  std::string Str;
+  llvm::raw_string_ostream info(Str);
+  ExprSMTLIBPrinter printer;
+  printer.setOutput(info);
+
+  ExprSMTLIBPrinter::SMTLIB_SORT sort_address = printer.getSort(address);
+  printer.printExpression(address, sort_address);
+
+  ExprSMTLIBPrinter::SMTLIB_SORT sort_size = printer.getSort(size);
+  printer.printExpression(size, sort_size);
+
+  llvm::Type *ptr_type = target->inst->getType();
+  unsigned ptr_width = 0;
+  if (ptr_type->isPointerTy()){
+    llvm::Type *return_type = llvm::dyn_cast<PointerType>(ptr_type)->getPointerElementType();
+    ptr_width = return_type->getPrimitiveSizeInBits();
+  }
+
+  std::string width_str = std::to_string(ptr_width);
+  std::string log_message = info.str() + "(" + width_str + ")" + "\n";
+  klee_log_memory("%s", log_message.c_str());
+}
+
 void SpecialFunctionHandler::handlePrintExpr(ExecutionState &state,
                                   KInstruction *target,
                                   std::vector<ref<Expr> > &arguments) {
@@ -563,6 +620,38 @@ void SpecialFunctionHandler::handlePrintExpr(ExecutionState &state,
 
   std::string msg_str = readStringAtAddress(state, arguments[0]);
   llvm::errs() << msg_str << ":" << arguments[1] << "\n";
+
+  std::string Str;
+  llvm::raw_string_ostream info(Str);
+  ExprSMTLIBPrinter printer;
+  printer.setOutput(info);
+  const ref<Expr> expr = arguments[1];
+  ExprSMTLIBPrinter::SMTLIB_SORT sort = printer.getSort(expr);
+  printer.printExpression(expr, sort);
+
+  std::string res = info.str();
+  std::string type;
+  if (target->inst->getType()->isFloatTy() ||
+      target->inst->getType()->isDoubleTy()) {
+    type = "float";
+  } else  if (target->inst->getType()->isPointerTy()){
+    type = "pointer";
+  } else {
+    type = "integer";
+  }
+
+  std::string log_message = "\n[klee:expr] " + msg_str + " : " + res + "\n";
+  log_message += "[klee:expr] [var-type]: " + type + "\n";
+  klee_log_expr("%s", log_message.c_str());
+}
+
+void SpecialFunctionHandler::handlePrintStatement(ExecutionState &state,
+                                                  KInstruction *target,
+                                                  std::vector<ref<Expr>> &arguments) {
+  assert(arguments.size()==1 &&
+         "invalid number of arguments to klee_print_stmt");
+  std::string msg_str = readStringAtAddress(state, arguments[0]);
+  klee_log_expr("%s", msg_str.c_str());
 }
 
 void SpecialFunctionHandler::handleSetForking(ExecutionState &state,

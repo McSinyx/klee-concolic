@@ -22,6 +22,12 @@ namespace klee {
 
 extern FILE *klee_warning_file;
 extern FILE *klee_message_file;
+extern FILE *klee_ppc_file;
+extern FILE *klee_expr_file;
+extern FILE *klee_trace_file;
+extern FILE *klee_concrete_file;
+extern FILE *klee_taint_file;
+extern FILE *klee_memory_file;
 
 /// Print "KLEE: ERROR: " followed by the msg in printf format and a
 /// newline on stderr and to warnings.txt, then exit with an error.
@@ -46,6 +52,25 @@ void klee_warning(const char *msg, ...) __attribute__((format(printf, 1, 2)));
 /// printed once for each unique (id, msg) pair (as pointers).
 void klee_warning_once(const void *id, const char *msg, ...)
     __attribute__((format(printf, 2, 3)));
+
+/// Log PPC
+void klee_log_ppc(const char *msg, ...) __attribute__((format(printf, 1, 2)));
+
+/// Log Trace
+void klee_log_trace(const char *msg, ...) __attribute__((format(printf, 1, 2)));
+/// Log Concretization
+void klee_log_concrete(const char *msg, ...)
+    __attribute__((format(printf, 1, 2)));
+
+/// Log Expr
+void klee_log_expr(const char *msg, ...) __attribute__((format(printf, 1, 2)));
+
+/// Log Taint
+void klee_log_taint(const char *msg, ...) __attribute__((format(printf, 1, 2)));
+
+/// Log Memory
+void klee_log_memory(const char *msg, ...)
+    __attribute__((format(printf, 1, 2)));
 }
 
 #endif /* KLEE_ERRORHANDLING_H */

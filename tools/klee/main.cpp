@@ -406,6 +406,36 @@ KleeHandler::KleeHandler(int argc, char **argv)
   if ((klee_message_file = fopen(file_path.c_str(), "w")) == NULL)
     klee_error("cannot open file \"%s\": %s", file_path.c_str(), strerror(errno));
 
+  // open ppc.log
+  file_path = getOutputFilename("ppc.log");
+  if ((klee_ppc_file = fopen(file_path.c_str(), "w")) == NULL)
+    klee_error("cannot open file \"%s\": %s", file_path.c_str(), strerror(errno));
+
+  // open concrete.log
+  file_path = getOutputFilename("concrete.log");
+  if ((klee_concrete_file = fopen(file_path.c_str(), "w")) == NULL)
+      klee_error("cannot open file \"%s\": %s", file_path.c_str(), strerror(errno));
+
+  // open expr.log
+  file_path = getOutputFilename("expr.log");
+  if ((klee_expr_file = fopen(file_path.c_str(), "w")) == NULL)
+    klee_error("cannot open file \"%s\": %s", file_path.c_str(), strerror(errno));
+
+  // open trace.log
+  file_path = getOutputFilename("trace.log");
+  if ((klee_trace_file = fopen(file_path.c_str(), "w")) == NULL)
+    klee_error("cannot open file \"%s\": %s", file_path.c_str(), strerror(errno));
+
+  // open taint.log
+  file_path = getOutputFilename("taint.log");
+  if ((klee_taint_file = fopen(file_path.c_str(), "w")) == NULL)
+    klee_error("cannot open file \"%s\": %s", file_path.c_str(), strerror(errno));
+
+  // open memory.log
+  file_path = getOutputFilename("memory.log");
+  if ((klee_memory_file = fopen(file_path.c_str(), "w")) == NULL)
+    klee_error("cannot open file \"%s\": %s", file_path.c_str(), strerror(errno));
+
   // open info
   m_infoFile = openOutputFile("info");
 }
@@ -415,6 +445,12 @@ KleeHandler::~KleeHandler() {
   delete m_symPathWriter;
   fclose(klee_warning_file);
   fclose(klee_message_file);
+  fclose(klee_ppc_file);
+  fclose(klee_expr_file);
+  fclose(klee_trace_file);
+  fclose(klee_taint_file);
+  fclose(klee_memory_file);
+  fclose(klee_concrete_file);
 }
 
 void KleeHandler::setInterpreter(Interpreter *i) {
@@ -770,6 +806,7 @@ static const char *modelledExternals[] = {
   "klee_prefer_cex",
   "klee_posix_prefer_cex",
   "klee_print_expr",
+  "klee_print_stmt",
   "klee_print_range",
   "klee_report_error",
   "klee_set_forking",

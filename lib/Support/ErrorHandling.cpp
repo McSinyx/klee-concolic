@@ -25,11 +25,23 @@ using namespace llvm;
 
 FILE *klee::klee_warning_file = NULL;
 FILE *klee::klee_message_file = NULL;
+FILE *klee::klee_ppc_file = NULL;
+FILE *klee::klee_expr_file = NULL;
+FILE *klee::klee_trace_file = NULL;
+FILE *klee::klee_concrete_file = NULL;
+FILE *klee::klee_taint_file = NULL;
+FILE *klee::klee_memory_file = NULL;
 
 static const char *warningPrefix = "WARNING";
 static const char *warningOncePrefix = "WARNING ONCE";
 static const char *errorPrefix = "ERROR";
 static const char *notePrefix = "NOTE";
+static const char *ppcPrefix = "PartialPathCondition";
+static const char *exprPrefix = "VariableExpression";
+static const char *tracePrefix = "TRACE";
+static const char *concretePrefix = "CONCRETE";
+static const char *taintPrefix = "TaintTrack";
+static const char *memoryPrefix = "MemoryTrack";
 
 namespace klee {
 cl::OptionCategory MiscCat("Miscellaneous options", "");
@@ -115,8 +127,8 @@ static void klee_vfmessage(FILE *fp, const char *pfx, const char *msg,
 
    Iff onlyToFile is false, the message is also printed on stderr.
 */
-static void klee_vmessage(const char *pfx, bool onlyToFile, const char *msg,
-                          va_list ap) {
+static void klee_vmessage(const char *pfx, bool onlyToFile, int log_mode,
+                          const char *msg, va_list ap) {
   if (!onlyToFile) {
     va_list ap2;
     va_copy(ap2, ap);
@@ -124,13 +136,26 @@ static void klee_vmessage(const char *pfx, bool onlyToFile, const char *msg,
     va_end(ap2);
   }
 
-  klee_vfmessage(pfx ? klee_warning_file : klee_message_file, pfx, msg, ap);
+  if(log_mode == 1)
+    klee_vfmessage(klee_ppc_file, pfx, msg, ap);
+  else if(log_mode == 2)
+    klee_vfmessage(klee_expr_file, pfx, msg, ap);
+  else if(log_mode == 3)
+    klee_vfmessage(klee_trace_file, pfx, msg, ap);
+  else if(log_mode == 4)
+    klee_vfmessage(klee_concrete_file, pfx, msg, ap);
+  else if(log_mode == 5)
+    klee_vfmessage(klee_taint_file, pfx, msg, ap);
+  else if(log_mode == 6)
+    klee_vfmessage(klee_memory_file, pfx, msg, ap);
+  else
+    klee_vfmessage(pfx ? klee_warning_file : klee_message_file, pfx, msg, ap);
 }
 
 void klee::klee_message(const char *msg, ...) {
   va_list ap;
   va_start(ap, msg);
-  klee_vmessage(NULL, false, msg, ap);
+  klee_vmessage(NULL, false, 0, msg, ap);
   va_end(ap);
 }
 
@@ -138,14 +163,62 @@ void klee::klee_message(const char *msg, ...) {
 void klee::klee_message_to_file(const char *msg, ...) {
   va_list ap;
   va_start(ap, msg);
-  klee_vmessage(NULL, true, msg, ap);
+  klee_vmessage(NULL, true, 0, msg, ap);
+  va_end(ap);
+}
+
+/* Log PPC to file */
+void klee::klee_log_ppc(const char *msg, ...) {
+  va_list ap;
+  va_start(ap, msg);
+  klee_vmessage(ppcPrefix, true, 1, msg, ap);
+  va_end(ap);
+}
+
+/* Log Concrete values to file */
+void klee::klee_log_concrete(const char *msg, ...) {
+  va_list ap;
+  va_start(ap, msg);
+  klee_vmessage(concretePrefix, true, 4, msg, ap);
+  va_end(ap);
+}
+
+/* Log Trace to file */
+void klee::klee_log_trace(const char *msg, ...) {
+  va_list ap;
+  va_start(ap, msg);
+  klee_vmessage(tracePrefix, true, 3, msg, ap);
+  va_end(ap);
+}
+
+/* Log Taint to file */
+void klee::klee_log_taint(const char *msg, ...) {
+  va_list ap;
+  va_start(ap, msg);
+  klee_vmessage(taintPrefix, true, 5, msg, ap);
+  va_end(ap);
+}
+
+/* Log Memory Changes to file */
+void klee::klee_log_memory(const char *msg, ...) {
+  va_list ap;
+  va_start(ap, msg);
+  klee_vmessage(memoryPrefix, true, 6, msg, ap);
+  va_end(ap);
+}
+
+/* Log Expr to file */
+void klee::klee_log_expr(const char *msg, ...) {
+  va_list ap;
+  va_start(ap, msg);
+  klee_vmessage(exprPrefix, true, 2, msg, ap);
   va_end(ap);
 }
 
 void klee::klee_error(const char *msg, ...) {
   va_list ap;
   va_start(ap, msg);
-  klee_vmessage(errorPrefix, false, msg, ap);
+  klee_vmessage(errorPrefix, false, 0, msg, ap);
   va_end(ap);
   exit(1);
 }
@@ -153,7 +226,7 @@ void klee::klee_error(const char *msg, ...) {
 void klee::klee_warning(const char *msg, ...) {
   va_list ap;
   va_start(ap, msg);
-  klee_vmessage(warningPrefix, WarningsOnlyToFile, msg, ap);
+  klee_vmessage(warningPrefix, WarningsOnlyToFile, 0, msg, ap);
   va_end(ap);
 }
 
@@ -174,7 +247,7 @@ void klee::klee_warning_once(const void *id, const char *msg, ...) {
     keys.insert(key);
     va_list ap;
     va_start(ap, msg);
-    klee_vmessage(warningOncePrefix, WarningsOnlyToFile, msg, ap);
+    klee_vmessage(warningOncePrefix, WarningsOnlyToFile, 0, msg, ap);
     va_end(ap);
   }
 }

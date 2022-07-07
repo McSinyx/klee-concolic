@@ -81,6 +81,9 @@ extern "C" {
   /* print the tree associated w/ a given expression. */
   void klee_print_expr(const char *msg, ...);
 
+  /* print the statement */
+  void klee_print_stmt(const char *msg);
+
   /* NB: this *does not* fork n times and return [0,n) in children.
    * It makes n be symbolic and returns: caller must compare N times.
    */

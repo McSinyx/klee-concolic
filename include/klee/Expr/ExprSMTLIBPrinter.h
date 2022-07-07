@@ -77,6 +77,7 @@ namespace klee {
 /// **valid**.
 ///
 class ExprSMTLIBPrinter {
+  friend class SpecialFunctionHandler;
 public:
   /// Different SMTLIBv2 logics supported by this class
   /// \sa setLogic()
