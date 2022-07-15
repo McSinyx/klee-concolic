@@ -141,6 +141,7 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
 
   // Run clang with -fsanitize=signed-integer-overflow and/or
   // -fsanitize=unsigned-integer-overflow
+  add("__ubsan_handle_shift_out_of_bounds", handleShiftOverflow, false),
   add("__ubsan_handle_add_overflow", handleAddOverflow, false),
   add("__ubsan_handle_sub_overflow", handleSubOverflow, false),
   add("__ubsan_handle_mul_overflow", handleMulOverflow, false),
@@ -877,6 +878,13 @@ void SpecialFunctionHandler::handleMarkGlobal(ExecutionState &state,
     assert(!mo->isLocal);
     mo->isGlobal = true;
   }
+}
+
+void SpecialFunctionHandler::handleShiftOverflow(
+     ExecutionState &state, KInstruction *target,
+     std::vector<ref<Expr>> &arguments) {
+  executor.terminateStateOnError(state, "overflow on shift operation",
+                                 StateTerminationType::Overflow);
 }
 
 void SpecialFunctionHandler::handleAddOverflow(
