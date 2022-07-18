@@ -403,6 +403,14 @@ private:
   /// function may fork state if the state has multiple seeds.
   void executeGetValue(ExecutionState &state, ref<Expr> e, KInstruction *target);
 
+  /// Concolic support stuff
+  ref<Expr> concretizeReadExpr(const ExecutionState &state, ref<Expr> &expr);
+  ref<Expr> concretizeExpr(const ExecutionState &state, ref<Expr> &expr);
+  ref<Expr> cloneTree(ref<Expr> &tree);
+  void traverseTree(ExecutionState &state, ref<Expr> &parent, ref<Expr> &expr);
+  const ReadExpr* hasOrderedReads(ref<Expr> e, int stride);
+  bool isReadExprAtOffset(ref<Expr> e, const ReadExpr *base, ref<Expr> offset);
+
   /// Get textual information regarding a memory address.
   std::string getAddressInfo(ExecutionState &state, ref<Expr> address) const;
 

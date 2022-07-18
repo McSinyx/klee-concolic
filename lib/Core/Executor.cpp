@@ -124,6 +124,12 @@ cl::opt<std::string> MaxTime(
 
 namespace {
 
+int *a_data, *a_data_stat;
+std::set<std::string> hit_list;
+std::string trace_filter;
+std::map<std::string, int *> var_map;
+std::map<std::string, int *> arg_map;
+
 /*** Test generation options ***/
 
 cl::opt<bool> DumpStatesOnHalt(
@@ -374,7 +380,6 @@ cl::opt<std::string> TimerInterval(
     cl::init("1s"),
     cl::cat(TerminationCat));
 
-
 /*** Debugging options ***/
 
 /// The different query logging solvers that can switched on/off
@@ -426,6 +431,54 @@ cl::opt<bool> DebugCheckForImpliedValues(
     cl::desc("Debug the implied value optimization"),
     cl::cat(DebugCat));
 
+cl::opt<bool> DisableMemoryCheck(
+    "dis-mem-check", cl::init(false),
+    cl::desc("Switch off memory violation checking (default=off)"));
+
+cl::opt<bool> PrintTrace(
+    "print-trace", cl::init(false),
+    cl::desc(
+        "Output source location for each instruction executed (default=off)"));
+
+cl::opt<bool> PrintLLVMInstr(
+    "print-llvm-inst", cl::init(false),
+    cl::desc(
+        "Output LLVM instruction for each instruction executed (default=off)"));
+cl::opt<bool> NoExitOnError(
+    "no-exit-on-error", cl::init(false),
+    cl::desc("Continue execution even after finding an error (default=off)"));
+
+cl::opt<bool> PrintStack(
+    "print-stack", cl::init(false),
+    cl::desc("Output stack information on error exit (default=off)"));
+
+cl::opt<bool> PrintPath(
+    "print-path", cl::init(false),
+    cl::desc("Output path condition along with source location as "
+             "and when it's updated (default=off)"));
+
+cl::opt<bool> LogPPC(
+    "log-ppc", cl::init(false),
+    cl::desc("Log partial path condition along with source location as "
+             "and when it's updated (default=off)"));
+
+cl::opt<bool> LogTrace(
+    "log-trace", cl::init(false),
+    cl::desc("Log instruction trace with source location as "
+             "and when it's executed (default=off)"));
+
+cl::opt<std::string> LocHit(
+    "hit-locations", cl::init(""),
+    cl::desc("Log given locations in trace.log if its witnessed "
+             "(default=log everything)"));
+
+cl::opt<std::string> TraceFilter(
+    "trace-filter", cl::init(""),
+    cl::desc("filter criteria for the trace log (default=None)"));
+
+cl::opt<bool> ResolvePath(
+    "resolve-path", cl::init(false),
+    cl::desc("In seed mode resolve path using seed values (default=off)"));
 } // namespace
 
 // XXX hack
@@ -1013,8 +1066,22 @@ Executor::StatePair Executor::fork(ExecutionState &current, ref<Expr> condition,
   if (isSeeding)
     timeout *= static_cast<unsigned>(it->second.size());
   solver->setTimeout(timeout);
-  bool success = solver->evaluate(current.constraints, condition, res,
-                                  current.queryMetaData);
+  bool success;
+  if (usingSeeds) {
+    ref<Expr> clone_cond = cloneTree(condition);
+    ref<Expr> conc_cond = concretizeExpr(current, clone_cond);
+    success = solver->evaluate(current.constraints, conc_cond, res,
+                               current.queryMetaData);
+    if (!(dyn_cast<ConstantExpr>(condition))) {
+      if (res == Solver::True)
+        addConstraint(current, condition);
+      else
+        addConstraint(current, Expr::createIsZero(condition));
+    }
+  } else {
+    success = solver->evaluate(current.constraints, condition, res,
+                               current.queryMetaData);
+  }
   solver->setTimeout(time::Span());
   if (!success) {
     current.pc = current.prevPC;
@@ -1200,18 +1267,17 @@ void Executor::addConstraint(ExecutionState &state, ref<Expr> condition) {
   // Check to see if this constraint violates seeds.
   std::map< ExecutionState*, std::vector<SeedInfo> >::iterator it = 
     seedMap.find(&state);
+  bool res;
   if (it != seedMap.end()) {
     bool warn = false;
     for (std::vector<SeedInfo>::iterator siit = it->second.begin(), 
            siie = it->second.end(); siit != siie; ++siit) {
-      bool res;
       bool success = solver->mustBeFalse(state.constraints,
                                          siit->assignment.evaluate(condition),
                                          res, state.queryMetaData);
       assert(success && "FIXME: Unhandled solver failure");
       (void) success;
       if (res) {
-        siit->patchSeed(state, condition, solver);
         warn = true;
       }
     }
@@ -1219,7 +1285,30 @@ void Executor::addConstraint(ExecutionState &state, ref<Expr> condition) {
       klee_warning("seeds patched for violating constraint"); 
   }
 
-  state.addConstraint(condition);
+  std::string sourceLoc = state.prevPC->getSourceLocation();
+  if (sourceLoc.find("_check.c") == std::string::npos)
+    state.addConstraint(condition);
+  if (PrintPath) {
+    std::string constraints;
+    getConstraintLog(state, constraints, Interpreter::SMTLIB2);
+    errs() << "\n[path:condition] " << state.prevPC->getSourceLocation() << " : "
+           << condition << "\n";
+    errs() << "\n[path:ppc] " << state.prevPC->getSourceLocation() << " : "
+           << constraints << "\n";
+  }
+  if (LogPPC) {
+    std::string constraints;
+    getConstraintLog(state, constraints, Interpreter::SMTLIB2);
+
+    if (sourceLoc.find("klee") == std::string::npos) {
+        std::string log_message = "\n[path:ppc] " + sourceLoc + " : " + constraints;
+        klee_log_ppc("%s", log_message.c_str());
+    }
+  }
+  if (LogTrace && !TraceFilter.empty() && TraceFilter == "control-loc") {
+    std::string log_message = "\n[klee:trace] " + state.prevPC->getSourceLocation();
+    klee_log_trace("%s", log_message.c_str());
+  }
   if (ivcEnabled)
     doImpliedValueConcretization(state, condition, 
                                  ConstantExpr::alloc(1, Expr::Bool));
@@ -1246,6 +1335,7 @@ const Cell& Executor::eval(KInstruction *ki, unsigned index,
 
 void Executor::bindLocal(KInstruction *target, ExecutionState &state, 
                          ref<Expr> value) {
+  specialFunctionHandler->trackTaint(state, target, value);
   getDestCell(state, target).value = value;
 }
 
@@ -1259,6 +1349,8 @@ ref<Expr> Executor::toUnique(const ExecutionState &state,
   ref<Expr> result = e;
 
   if (!isa<ConstantExpr>(e)) {
+    if (usingSeeds)
+      return concretizeExpr(state, result);
     ref<ConstantExpr> value;
     bool isTrue = false;
     e = optimizer.optimizeExpr(e, true);
@@ -1289,6 +1381,8 @@ Executor::toConstant(ExecutionState &state,
     return CE;
 
   ref<ConstantExpr> value;
+  if (usingSeeds)
+    e = concretizeExpr(state, e);
   bool success =
       solver->getValue(state.constraints, e, value, state.queryMetaData);
   assert(success && "FIXME: Unhandled solver failure");
@@ -2066,6 +2160,34 @@ Function* Executor::getTargetFunction(Value *calledVal, ExecutionState &state) {
 
 void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   Instruction *i = ki->inst;
+  std::string sourceLoc = ki->getSourceLocation();
+  if (sourceLoc.find("klee") == std::string::npos) {
+    if (PrintTrace)
+      errs() << "\n[trace] " << sourceLoc << " - " << ki->inst->getOpcode()
+             << "\n";
+
+    if (LogTrace) {
+      if (!TraceFilter.empty()) {
+        if (sourceLoc.find(TraceFilter, 0) == std::string::npos) {
+          std::string log_message = "\n[klee:trace] " + sourceLoc;
+          klee_log_trace("%s", log_message.c_str());
+        }
+      } else if(!LocHit.empty()){
+        if(std::find(hit_list.begin(), hit_list.end(), sourceLoc) != hit_list.end()){
+          std::string log_message = "\n[klee:trace] " + sourceLoc;
+          klee_log_trace("%s", log_message.c_str());
+          hit_list.erase(sourceLoc);
+        }
+      } else {
+        std::string log_message = "\n[klee:trace] " + sourceLoc;
+        klee_log_trace("%s", log_message.c_str());
+      }
+    }
+
+    if (PrintLLVMInstr)
+      errs() << "\n[LLVM] " << *(ki->inst) << "\n";
+  }
+
   switch (i->getOpcode()) {
     // Control flow
   case Instruction::Ret: {
@@ -2083,6 +2205,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       assert(!caller && "caller set on initial stack frame");
       terminateStateOnExit(state);
     } else {
+      if (OutputLocalsOnError)
+        state.addStateInfoAsReturn(ki, kmodule->targetData.get());
       state.popFrame();
 
       if (statsTracker)
@@ -2174,6 +2298,8 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
       ref<Expr> cond = eval(ki, 0, state).value;
 
       cond = optimizer.optimizeExpr(cond, false);
+      if (usingSeeds && ResolvePath)
+        cond = concretizeExpr(state, cond);
       Executor::StatePair branches = fork(state, cond, false, BranchType::ConditionalBranch);
 
       // NOTE: There is a hidden dependency here, markBranchVisited
@@ -2741,6 +2867,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
   case Instruction::Store: {
     ref<Expr> base = eval(ki, 1, state).value;
     ref<Expr> value = eval(ki, 0, state).value;
+    specialFunctionHandler->trackTaint(state, ki, value);
     executeMemoryOperation(state, true, base, value, 0);
     break;
   }
@@ -3460,12 +3587,62 @@ void Executor::run(ExecutionState &initialState) {
 
   states.insert(&initialState);
 
+  // Initialize hit locations
+  if (!LocHit.empty()) {
+    std::string delimiter = ",";
+    size_t pos = 0;
+    std::string token;
+    while ((pos = LocHit.find(delimiter)) != std::string::npos) {
+      token = LocHit.substr(0, pos);
+      hit_list.insert(token);
+      LocHit.erase(0, pos + delimiter.length());
+    }
+    hit_list.insert(LocHit);
+    LocHit = "ACTIVE";
+  }
+
   if (usingSeeds) {
     std::vector<SeedInfo> &v = seedMap[&initialState];
-    
+
     for (std::vector<KTest*>::const_iterator it = usingSeeds->begin(), 
-           ie = usingSeeds->end(); it != ie; ++it)
+           ie = usingSeeds->end(); it != ie; ++it) {
       v.push_back(SeedInfo(*it));
+      int num_obj = SeedInfo(*it).input->numObjects;
+      for (int k = 0; k < num_obj; k++) {
+        KTestObject obj = SeedInfo(*it).input->objects[k];
+        int num_bytes = obj.numBytes;
+
+        if (strcmp(obj.name, "A-data-stat") == 0) {
+          a_data_stat = (int *)malloc(num_bytes * sizeof(int));
+          for (int i = 0; i < num_bytes; i++)
+            a_data_stat[i] = obj.bytes[i];
+        } else if (strcmp(obj.name, "A-data") == 0) {
+          a_data = (int *)malloc(num_bytes * sizeof(int));
+          for (int i = 0; i < num_bytes; i++)
+            a_data[i] = obj.bytes[i];
+        } else if (strstr(obj.name, "arg0")) {
+          int value_final = 0;
+          int *value = (int *)malloc(num_bytes * sizeof(int));
+          for (int i = 0; i < num_bytes; i++) {
+            value[i] = obj.bytes[i];
+            value_final += (obj.bytes[i] << 8 * (i));
+          }
+          arg_map.insert(std::pair<std::string, int*>(obj.name, value));
+          klee_warning("Reading Argument, name:%s, size:%d and value:%d",
+                       obj.name, num_bytes, value_final);
+        } else if (strcmp(obj.name, "model_version")) {
+          int value_final = 0;
+          int *value = (int *)malloc(num_bytes * sizeof(int));
+          for (int i = 0; i < num_bytes; i++) {
+            value[i] = obj.bytes[i];
+            value_final += (obj.bytes[i]  << 8 * (i));
+          }
+          var_map.insert(std::pair<std::string, int*>(obj.name, value));
+          klee_warning("Reading Second Order Variable, name:%s, size:%d and value:%d",
+                       obj.name, num_bytes, value_final);
+        }
+      }
+    }
 
     int lastNumSeeds = usingSeeds->size()+10;
     time::Point lastTime, startTime = lastTime = time::getWallTime();
@@ -3557,6 +3734,7 @@ std::string Executor::getAddressInfo(ExecutionState &state,
                                      ref<Expr> address) const{
   std::string Str;
   llvm::raw_string_ostream info(Str);
+  errs() << "\n[getAddressInfo]\n";
   info << "\taddress: " << address << "\n";
   uint64_t example;
   if (ConstantExpr *CE = dyn_cast<ConstantExpr>(address)) {
@@ -3732,11 +3910,17 @@ void Executor::terminateStateOnError(ExecutionState &state,
   static std::set< std::pair<Instruction*, std::string> > emittedErrors;
   Instruction * lastInst;
   const InstructionInfo &ii = getLastNonKleeInternalInstruction(state, &lastInst);
+  if (NoExitOnError) {
+    errs() << "\nFound Error!!\n";
+    return;
+  }
 
   if (EmitAllErrors ||
       emittedErrors.insert(std::make_pair(lastInst, message)).second) {
     if (!ii.file.empty()) {
-      klee_message("ERROR: %s:%d: %s", ii.file.c_str(), ii.line, message.c_str());
+      klee_message("ERROR: %s:%d:%d:%d: %s", ii.file.c_str(), ii.line,
+                   ii.column, ii.assemblyLine,
+                   message.c_str());
     } else {
       klee_message("ERROR: (location information missing) %s", message.c_str());
     }
@@ -3749,11 +3933,19 @@ void Executor::terminateStateOnError(ExecutionState &state,
     if (!ii.file.empty()) {
       msg << "File: " << ii.file << '\n'
           << "Line: " << ii.line << '\n'
+          << "Column: " << ii.column << '\n'
           << "assembly.ll line: " << ii.assemblyLine << '\n'
           << "State: " << state.getID() << '\n';
     }
+    if (!NoExitOnError)
+      haltExecution = true;
+
     msg << "Stack: \n";
-    state.dumpStack(msg);
+    state.dumpStack(msg, kmodule->targetData.get());
+    if (PrintStack) {
+      errs() << "Stack: \n";
+      state.dumpStack(errs(), kmodule->targetData.get());
+    }
 
     std::string info_str = info.str();
     if (!info_str.empty())
@@ -3791,6 +3983,219 @@ static std::set<std::string> okExternals(okExternalsList,
                                          okExternalsList + 
                                          (sizeof(okExternalsList)/sizeof(okExternalsList[0])));
 
+ref<Expr> Executor::concretizeReadExpr(const ExecutionState &state,
+                                       ref<Expr> &expr) {
+  const ReadExpr *base = dyn_cast<ReadExpr>(expr);
+  ref<Expr> child = expr->getKid(0);
+  ref<Expr> index_expr;
+  std::string str_index;
+  bool modified = false;
+
+  /* concretizing index */
+  if (dyn_cast<ConstantExpr>(child)) {
+    index_expr = child;
+    ref<ConstantExpr> index_expr_const = dyn_cast<ConstantExpr>(child);
+    index_expr_const->toString(str_index);
+  } else {
+    index_expr = concretizeExpr(state, child);
+    ref<ConstantExpr> index_expr_const = dyn_cast<ConstantExpr>(index_expr);
+    index_expr_const->toString(str_index);
+  }
+
+  int index = stoi(str_index);
+  int width = expr->getWidth();
+
+  std::string name_src = base->updates.root->name;
+  ref<ConstantExpr> resolve;
+
+  if(usingSeeds){
+    if (name_src == "A-data") {
+      int value = a_data[index];
+        std::string log_message = "\n[concretizing] A-data[" + str_index + "] \n";
+        klee_log_concrete("%s", log_message.c_str());
+      resolve = ConstantExpr::create(value, width);
+      modified = true;
+    } else if (name_src == "A-data-stat") {
+      int value = a_data_stat[index];
+      resolve = ConstantExpr::create(value, width);
+      modified = true;
+    } else if (strstr(name_src.c_str(), "arg0")) {
+      if (arg_map.find(name_src) != var_map.end()) {
+        int value = arg_map.find(name_src)->second[index];
+        resolve = ConstantExpr::create(value, width);
+        modified = true;
+      }
+    } else {
+      if (var_map.find(name_src) != var_map.end()) {
+        int value = var_map.find(name_src)->second[index];
+        resolve = ConstantExpr::create(value, width);
+        modified = true;
+      } else {
+        ref<Expr> ce;
+        ce = ReadExpr::create(base->updates, index_expr);
+
+        bool success = solver->getValue(state.constraints, ce, resolve,
+                                        state.queryMetaData);
+        assert(success && "FIXME: Unhandled solver failure");
+        (void)success;
+        modified = true;
+      }
+    }
+  } else {
+    ref<Expr> ce;
+    ce = ReadExpr::create(base->updates, index_expr);
+
+    bool success = solver->getValue(state.constraints, ce, resolve,
+                                    state.queryMetaData);
+    assert(success && "FIXME: Unhandled solver failure");
+    modified = true;
+  }
+
+  if (modified)
+    return resolve;
+  errs() << "not concretized read expr: " << expr << "\n";
+  return expr;
+}
+
+ref<Expr> Executor::concretizeExpr(const klee::ExecutionState &state,
+                                   klee::ref<klee::Expr> &expr) {
+  int numKids = expr.get()->getNumKids();
+  ref<ConstantExpr> resolve;
+  if (isa<ConstantExpr>(expr))
+    return expr;
+
+  if (numKids > 0) {
+    ref<Expr> list_child[numKids];
+    for (int l = 0; l < numKids; l++) {
+      ref<Expr> child = expr->getKid(l);
+      ref<Expr> concretized_child;
+      if (child->getKind() == Expr::Read) {
+        concretized_child = concretizeReadExpr(state, child);
+        if (concretized_child->getKind() == Expr::Constant)
+          list_child[l] = concretized_child;
+        else
+          list_child[l] = concretizeExpr(state, child);
+      } else {
+        list_child[l] = concretizeExpr(state, child);
+      }
+    }
+    expr = expr->rebuild(list_child);
+  }
+
+  bool success = solver->getValue(state.constraints, expr, resolve,
+                                  state.queryMetaData);
+  assert(success && "FIXME: Unhandled solver failure");
+  (void)success;
+
+  if (!isa<ConstantExpr>(resolve))
+    errs() << "\nNON concretized-expr: " << resolve << "\n";
+  return resolve;
+}
+
+ref<Expr> Executor::cloneTree(ref<Expr> &tree) {
+  ref<Expr> clone;
+  int numKids = tree->getNumKids();
+  ref<Expr> clone_kids[numKids];
+  if (dyn_cast<ConstantExpr>(tree))
+    return tree;
+
+  if (dyn_cast<ReadExpr>(tree)) {
+    if (dyn_cast<ConstantExpr>(tree->getKid(0))) {
+      ref<ConstantExpr> child = dyn_cast<ConstantExpr>(tree->getKid(0));
+      ref<Expr> clone_child =
+          ConstantExpr::create(child->getZExtValue(), child->getWidth());
+      clone_kids[0] = clone_child;
+      clone = tree->rebuild(clone_kids);
+    } else {
+      ref<Expr> child = tree->getKid(0);
+      ref<Expr> clone_child = cloneTree(child);
+      clone_kids[0] = clone_child;
+      clone = tree->rebuild(clone_kids);
+    }
+  } else {
+    if (numKids == 0) {
+      clone = tree->rebuild(clone_kids);
+    } else {
+      for (int l = 0; l < numKids; l++) {
+        ref<Expr> child = tree->getKid(l);
+        ref<Expr> clone_child = cloneTree(child);
+        clone_kids[l] = clone_child;
+      }
+      clone = tree->rebuild(clone_kids);
+    }
+  }
+  return clone;
+}
+
+bool Executor::isReadExprAtOffset(ref<Expr> e, const ReadExpr *base,
+                                  ref<Expr> offset) {
+  const ReadExpr *re = dyn_cast<ReadExpr>(e.get());
+
+  // Right now, all Reads are byte reads
+  // but some transformations might change this.
+  if (!re || (re->getWidth() != Expr::Int8))
+    return false;
+
+  // Check if the index follows the stride.
+  // FIXME: How aggressive should this be simplified. The
+  // canonicalizing builder is probably the right choice, but this
+  // is yet another area where we would really prefer it to be
+  // global or else use static methods.
+  return SubExpr::create(re->index, base->index) == offset;
+}
+
+/// hasOrderedReads: \arg e must be a ConcatExpr, \arg stride must
+/// be 1 or -1.
+///
+/// If all children of this Concat are reads or concats of reads
+/// with consecutive offsets according to the given \arg stride, it
+/// returns the base ReadExpr according to \arg stride: first Read
+/// for 1 (MSB), last Read for -1 (LSB).  Otherwise, it returns
+/// null.
+const ReadExpr *Executor::hasOrderedReads(ref<Expr> e, int stride) {
+  assert(e->getKind() == Expr::Concat);
+  assert(stride == 1 || stride == -1);
+  const ReadExpr *base = dyn_cast<ReadExpr>(e->getKid(0));
+
+  // right now, all Reads are byte reads but some
+  // transformations might change this
+  if (!base || base->getWidth() != Expr::Int8)
+    return NULL;
+
+  // Get stride expr in proper index width.
+  Expr::Width idxWidth = base->index->getWidth();
+  ref<Expr> strideExpr = ConstantExpr::alloc(stride, idxWidth);
+  ref<Expr> offset = ConstantExpr::create(0, idxWidth);
+  e = e->getKid(1);
+
+  // concat chains are unbalavoid Executor::nced to the right
+  while (e->getKind() == Expr::Concat) {
+    offset = AddExpr::create(offset, strideExpr);
+    if (!isReadExprAtOffset(e->getKid(0), base, offset))
+      return NULL;
+    e = e->getKid(1);
+  }
+
+  offset = AddExpr::create(offset, strideExpr);
+  if (!isReadExprAtOffset(e, base, offset))
+    return NULL;
+  if (stride == -1)
+    return cast<ReadExpr>(e.get());
+  return base;
+}
+
+void Executor::traverseTree(ExecutionState &state, ref<Expr> &parent,
+                            ref<Expr> &current) {
+  errs() << "\ntraversing: " << current << "\n";
+  errs() << "\ntraversing.kind: " << current->getKind() << "\n";
+  errs() << "num-kids: " << current.get()->getNumKids() << "\n";
+  int numKids = current.get()->getNumKids();
+  if (numKids > 0)
+    for (int l = 0; l < numKids; l++)
+      ref<Expr> child = current->getKid(l);
+  errs() << "\ntraversed[final]: " << current << "\n";
+}
+
 void Executor::callExternalFunction(ExecutionState &state,
                                     KInstruction *target,
                                     KCallable *callable,
@@ -3800,6 +4205,12 @@ void Executor::callExternalFunction(ExecutionState &state,
     if (specialFunctionHandler->handle(state, func->function, target, arguments))
       return;
   }
+
+  if (usingSeeds)
+    for (std::vector<ref<Expr>>::iterator ai = arguments.begin(),
+                                          ae = arguments.end();
+         ai != ae; ++ai)
+      *ai = concretizeExpr(state, *ai);
 
   if (ExternalCalls == ExternalCallPolicy::None &&
       !okExternals.count(callable->getName().str())) {
@@ -3828,12 +4239,6 @@ void Executor::callExternalFunction(ExecutionState &state,
       assert(success && "FIXME: Unhandled solver failure");
       (void) success;
       ce->toMemory(&args[wordIndex]);
-      ObjectPair op;
-      // Checking to see if the argument is a pointer to something
-      if (ce->getWidth() == Context::get().getPointerWidth() &&
-          state.addressSpace.resolveOne(ce, op)) {
-        op.second->flushToConcreteStore(solver, state);
-      }
       wordIndex += (ce->getWidth()+63)/64;
     } else {
       ref<Expr> arg = toUnique(state, *ai);
@@ -3996,7 +4401,7 @@ void Executor::executeAlloc(ExecutionState &state,
         os->initializeToRandom();
       }
       bindLocal(target, state, mo->getBaseExpr());
-      
+      specialFunctionHandler->trackMemory(state, target, mo->getBaseExpr(), size);
       if (reallocFrom) {
         unsigned count = std::min(reallocFrom->size, os->size);
         for (unsigned i=0; i<count; i++)
@@ -4078,8 +4483,15 @@ void Executor::executeAlloc(ExecutionState &state,
           ExprPPrinter::printOne(info, "  size expr", size);
           info << "  concretization : " << example << "\n";
           info << "  unbound example: " << tmp << "\n";
-          terminateStateOnError(*hugeSize.second, "concretized symbolic size",
-                                StateTerminationType::Model, info.str());
+
+          errs() << "example = " << example << " |  tmp = " << tmp << "\n";
+          errs() << "first = " << fixedSize.first
+                 << " | second = " << fixedSize.second << "\n";
+          errs() << "first = " << hugeSize.first
+                 << " | second = " << hugeSize.second << "\n";
+          klee_message("NOTE: found huge malloc");
+          executeAlloc(*hugeSize.second, example, isLocal, target, zeroMemory,
+                       reallocFrom);
         }
       }
     }
@@ -4093,12 +4505,13 @@ void Executor::executeAlloc(ExecutionState &state,
 void Executor::executeFree(ExecutionState &state,
                            ref<Expr> address,
                            KInstruction *target) {
-  address = optimizer.optimizeExpr(address, true);
+  address = optimizer.optimizeExpr(concretizeExpr(state, address), true);
   StatePair zeroPointer =
       fork(state, Expr::createIsZero(address), true, BranchType::Free);
-  if (zeroPointer.first) {
-    if (target)
-      bindLocal(target, *zeroPointer.first, Expr::createPointer(0));
+  if (zeroPointer.first && target) {
+    bindLocal(target, *zeroPointer.first, Expr::createPointer(0));
+    specialFunctionHandler->trackMemory(state, target, address,
+                                        Expr::createPointer(0));
   }
   if (zeroPointer.second) { // address != 0
     ExactResolutionList rl;
@@ -4117,8 +4530,11 @@ void Executor::executeFree(ExecutionState &state,
                               getAddressInfo(*it->second, address));
       } else {
         it->second->addressSpace.unbindObject(mo);
-        if (target)
+        if (target) {
           bindLocal(target, *it->second, Expr::createPointer(0));
+          specialFunctionHandler->trackMemory(state, target, address,
+                                              Expr::createPointer(0));
+        }
       }
     }
   }
@@ -4171,6 +4587,8 @@ void Executor::executeMemoryOperation(ExecutionState &state,
       value = ConstraintManager::simplifyExpr(state.constraints, value);
   }
 
+  if (!isa<ConstantExpr>(address) && usingSeeds)
+    address = concretizeExpr(state, address);
   address = optimizer.optimizeExpr(address, true);
 
   // fast path: single in-bounds resolution
@@ -4214,14 +4632,21 @@ void Executor::executeMemoryOperation(ExecutionState &state,
         } else {
           ObjectState *wos = state.addressSpace.getWriteable(mo, os);
           wos->write(offset, value);
-        }          
+          if (state.stack.back().nonLocalsWritten.find(mo) !=
+                  state.stack.back().nonLocalsWritten.end() ||
+              !llvm::isa<ConstantExpr>(value))
+            state.stack.back().nonLocalsWritten[mo] =
+                std::make_pair(offset, value);
+        }
       } else {
         ref<Expr> result = os->read(offset, type);
-        
         if (interpreterOpts.MakeConcreteSymbolic)
           result = replaceReadWithSymbolic(state, result);
-        
         bindLocal(target, state, result);
+        if (state.stack.back().nonLocalsRead.find(mo) !=
+                state.stack.back().nonLocalsRead.end() ||
+            !llvm::isa<ConstantExpr>(result))
+          state.stack.back().nonLocalsRead[mo] = std::make_pair(offset, result);
       }
 
       return;
@@ -4274,7 +4699,7 @@ void Executor::executeMemoryOperation(ExecutionState &state,
   if (unbound) {
     if (incomplete) {
       terminateStateOnSolverError(*unbound, "Query timed out (resolve).");
-    } else {
+    } else if (!DisableMemoryCheck) {
       terminateStateOnError(*unbound, "memory error: out of bound pointer",
                             StateTerminationType::Ptr,
                             getAddressInfo(*unbound, address));
