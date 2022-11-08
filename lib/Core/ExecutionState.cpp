@@ -49,7 +49,7 @@ std::uint32_t ExecutionState::nextID = 1;
 StackFrame::StackFrame(KInstIterator _caller, KFunction *_kf)
   : caller(_caller), kf(_kf), callPathNode(0), 
     minDistToUncoveredOnReturn(0), varargs(0) {
-  locals = new Cell[kf->numRegisters];
+  locals[0] = new Cell[kf->numRegisters];
 }
 
 StackFrame::StackFrame(const StackFrame &s) 
@@ -59,13 +59,17 @@ StackFrame::StackFrame(const StackFrame &s)
     allocas(s.allocas),
     minDistToUncoveredOnReturn(s.minDistToUncoveredOnReturn),
     varargs(s.varargs) {
-  locals = new Cell[s.kf->numRegisters];
-  for (unsigned i=0; i<s.kf->numRegisters; i++)
-    locals[i] = s.locals[i];
+  for (unsigned j = 0; j < 8; ++j)
+    if (s.locals[j]) {
+      locals[j] = new Cell[s.kf->numRegisters];
+      for (unsigned i=0; i<s.kf->numRegisters; i++)
+        locals[j][i] = s.locals[j][i];
+    }
 }
 
 StackFrame::~StackFrame() { 
-  delete[] locals; 
+  // FIXME: memory leak
+  // delete[] locals[0];
 }
 
 /***/
@@ -153,7 +157,7 @@ llvm::raw_ostream &klee::operator<<(llvm::raw_ostream &os, const MemoryMap &mm) 
 
 bool ExecutionState::merge(const ExecutionState &b) {
   if (DebugLogStateMerge)
-    llvm::errs() << "-- attempting merge of A:" << this << " with B:" << &b
+    llvm::errs() <<"-- attempting merge of A:" << this << " with B:" << &b
                  << "--\n";
   if (pc != b.pc)
     return false;
@@ -192,23 +196,23 @@ bool ExecutionState::merge(const ExecutionState &b) {
                       commonConstraints.begin(), commonConstraints.end(),
                       std::inserter(bSuffix, bSuffix.end()));
   if (DebugLogStateMerge) {
-    llvm::errs() << "\tconstraint prefix: [";
+    llvm::errs() << "\tconstraint prefix: [\n";
     for (std::set<ref<Expr> >::iterator it = commonConstraints.begin(),
                                         ie = commonConstraints.end();
          it != ie; ++it)
-      llvm::errs() << *it << ", ";
+      llvm::errs() << " " << *it << ",\n";
     llvm::errs() << "]\n";
-    llvm::errs() << "\tA suffix: [";
+    llvm::errs() << "\tA suffix: [\n";
     for (std::set<ref<Expr> >::iterator it = aSuffix.begin(),
                                         ie = aSuffix.end();
          it != ie; ++it)
-      llvm::errs() << *it << ", ";
+      llvm::errs() << " " << *it << ",\n";
     llvm::errs() << "]\n";
-    llvm::errs() << "\tB suffix: [";
+    llvm::errs() << "\tB suffix: [\n";
     for (std::set<ref<Expr> >::iterator it = bSuffix.begin(),
                                         ie = bSuffix.end();
          it != ie; ++it)
-      llvm::errs() << *it << ", ";
+      llvm::errs() << " " << *it << ",\n";
     llvm::errs() << "]\n";
   }
 
@@ -254,6 +258,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
       llvm::errs() << "\t\tmappings differ\n";
     return false;
   }
+  // TODO: track if obj related to merged values unbound
   
   // merge stack
 
@@ -276,8 +281,8 @@ bool ExecutionState::merge(const ExecutionState &b) {
     StackFrame &af = *itA;
     const StackFrame &bf = *itB;
     for (unsigned i=0; i<af.kf->numRegisters; i++) {
-      ref<Expr> &av = af.locals[i].value;
-      const ref<Expr> &bv = bf.locals[i].value;
+      ref<Expr> &av = af.locals[0][i].value;
+      const ref<Expr> &bv = bf.locals[0][i].value;
       if (!av || !bv) {
         // if one is null then by implication (we are at same pc)
         // we cannot reuse this local, so just ignore
@@ -285,6 +290,13 @@ bool ExecutionState::merge(const ExecutionState &b) {
         av = SelectExpr::create(inA, av, bv);
       }
     }
+
+    // FIXME: reduce complexity to O(n)
+    for (unsigned j = 0; j < 8; ++j)
+      if (bf.locals[j])
+        for (unsigned i = 1; i < 8; ++i)
+          if (!af.locals[i])
+            af.locals[i] = bf.locals[j];
   }
 
   for (std::set<const MemoryObject*>::iterator it = mutated.begin(), 
@@ -337,7 +349,7 @@ void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
       if (ai->hasName())
         out << ai->getName().str() << "=";
 
-      ref<Expr> value = sf.locals[sf.kf->getArgRegister(index++)].value;
+      ref<Expr> value = sf.locals[0][sf.kf->getArgRegister(index++)].value;
       if (isa_and_nonnull<ConstantExpr>(value)) {
         out << value;
       } else {

@@ -42,6 +42,7 @@
 #include "llvm/Support/Process.h"
 
 #include <fstream>
+#include <iostream>
 #include <unistd.h>
 
 using namespace klee;

@@ -44,7 +44,7 @@ struct StackFrame {
   CallPathNode *callPathNode;
 
   std::vector<const MemoryObject *> allocas;
-  Cell *locals;
+  Cell *locals[8] {};
 
   /// Minimum distance to an uncovered instruction once the function
   /// returns. This is not a good place for this but is used to

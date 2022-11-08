@@ -37,6 +37,60 @@ using namespace klee;
 using namespace llvm;
 
 
+ExecutionState &WIPSearcher::selectState() {
+  // TODO: (unrelated to ranking) direct to merge locatiom based on cfg
+  // TODO: use pq
+  unsigned max = 0;
+  ExecutionState* res;
+  for (auto& state : states) {
+    unsigned key = 0; // TODO: after merge, can prune states with key==0
+                      // (only if one patch location is expected)
+    for (auto& frame : state->stack)
+      // TODO: optim
+      // TODO: cmp globals and heap mem
+      for (unsigned i = 0; i < 8 && frame.locals[i]; ++i)
+        for (unsigned j = i + 1; j < 8 && frame.locals[j]; ++j)
+          for (unsigned k = 0; k < frame.kf->numRegisters; ++k)
+            // FIXME: (maybe?) eval neq symb vals
+            if (frame.locals[i] != frame.locals[j])
+              key++;
+    // TODO: consider addr space, can be separately for now
+    // final goal: track all live merge expr
+
+    if (key >= max) {
+      max = key;
+      res = state;
+    }
+  }
+  return *res;
+}
+
+void WIPSearcher::update(ExecutionState *current,
+                         const std::vector<ExecutionState *> &addedStates,
+                         const std::vector<ExecutionState *> &removedStates) {
+  // insert states
+  states.insert(states.end(), addedStates.begin(), addedStates.end());
+
+  // remove states
+  for (const auto state : removedStates) {
+    if (state == states.back()) {
+      states.pop_back();
+    } else {
+      auto it = std::find(states.begin(), states.end(), state);
+      assert(it != states.end() && "invalid state removed");
+      states.erase(it);
+    }
+  }
+}
+
+bool WIPSearcher::empty() {
+  return states.empty();
+}
+
+void WIPSearcher::printName(llvm::raw_ostream &os) {
+  os << "WIPSearcher\n";
+}
+
 ///
 
 ExecutionState &DFSSearcher::selectState() {

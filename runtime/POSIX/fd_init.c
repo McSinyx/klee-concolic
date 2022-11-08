@@ -158,10 +158,10 @@ void klee_init_fds(unsigned n_files, unsigned file_length,
 
   /* setting symbolic stdout */
   if (sym_stdout_flag) {
-    __exe_fs.sym_stdout = malloc(sizeof(*__exe_fs.sym_stdout));
+    __exe_fs.sym_stdout = calloc(sizeof(*__exe_fs.sym_stdout), 1);
     if (!__exe_fs.sym_stdout)
       klee_report_error(__FILE__, __LINE__, "out of memory in klee_init_env", "user.err");
-    __create_new_dfile(__exe_fs.sym_stdout, 1024, "stdout", &s);
+    __create_new_dfile(__exe_fs.sym_stdout, 16, "stdout", &s);
     __exe_env.fds[1].dfile = __exe_fs.sym_stdout;
     __exe_fs.stdout_writes = 0;
   }

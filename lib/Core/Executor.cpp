@@ -1258,7 +1258,7 @@ const Cell& Executor::eval(KInstruction *ki, unsigned index,
   } else {
     unsigned index = vnumber;
     StackFrame &sf = state.stack.back();
-    return sf.locals[index];
+    return sf.locals[0][index];
   }
 }
 
@@ -3318,6 +3318,7 @@ void Executor::executeInstruction(ExecutionState &state, KInstruction *ki) {
 }
 
 void Executor::updateStates(ExecutionState *current) {
+  // TODO: prune hopeless states
   if (searcher) {
     searcher->update(current, addedStates, removedStates);
   }
@@ -3548,6 +3549,7 @@ void Executor::run(ExecutionState &initialState) {
 
   // main interpreter loop
   while (!states.empty() && !haltExecution) {
+    // TODO: check if differs found
     ExecutionState &state = searcher->selectState();
     KInstruction *ki = state.pc;
     stepInstruction(state);
