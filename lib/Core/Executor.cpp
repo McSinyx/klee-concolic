@@ -459,7 +459,6 @@ Executor::Executor(LLVMContext &ctx, const InterpreterOptions &opts,
       atMemoryLimit(false), inhibitForking(false), haltExecution(false),
       ivcEnabled(false), debugLogBuffer(debugBufferString) {
 
-
   const time::Span maxTime{MaxTime};
   if (maxTime) timers.add(
         std::make_unique<Timer>(maxTime, [&]{

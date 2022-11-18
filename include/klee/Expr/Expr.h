@@ -620,16 +620,24 @@ public:
   
 public:
   ref<Expr> cond, trueExpr, falseExpr;
+  bool merge;
 
 public:
-  static ref<Expr> alloc(const ref<Expr> &c, const ref<Expr> &t, 
-                         const ref<Expr> &f) {
-    ref<Expr> r(new SelectExpr(c, t, f));
+  static ref<Expr> alloc(const ref<Expr> &c, const ref<Expr> &t,
+                         const ref<Expr> &f, const bool m) {
+    ref<Expr> r(new SelectExpr(c, t, f, m));
     r->computeHash();
     return r;
   }
-  
-  static ref<Expr> create(ref<Expr> c, ref<Expr> t, ref<Expr> f);
+  static ref<Expr> alloc(const ref<Expr> &c, const ref<Expr> &t,
+                         const ref<Expr> &f) {
+    return alloc(c, t, f, false);
+  }
+
+  static ref<Expr> create(ref<Expr> c, ref<Expr> t, ref<Expr> f, bool merge);
+  static ref<Expr> create(ref<Expr> c, ref<Expr> t, ref<Expr> f) {
+      return create(c, t, f, false);
+  }
 
   Width getWidth() const { return trueExpr->getWidth(); }
   Kind getKind() const { return Select; }
@@ -656,8 +664,10 @@ public:
   }
 
 private:
+  SelectExpr(const ref<Expr> &c, const ref<Expr> &t, const ref<Expr> &f,
+             const bool m) : cond(c), trueExpr(t), falseExpr(f), merge(m) {}
   SelectExpr(const ref<Expr> &c, const ref<Expr> &t, const ref<Expr> &f) 
-    : cond(c), trueExpr(t), falseExpr(f) {}
+    : SelectExpr(c, t, f, false) {}
 
 public:
   static bool classof(const Expr *E) {

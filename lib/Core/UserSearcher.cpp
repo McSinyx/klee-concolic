@@ -29,6 +29,7 @@ cl::list<Searcher::CoreSearchType> CoreSearch(
     cl::desc("Specify the search heuristic (default=random-path interleaved "
              "with nurs:covnew)"),
     cl::values(
+        clEnumValN(Searcher::WIP, "wip", "use WIP Search"),
         clEnumValN(Searcher::DFS, "dfs", "use Depth First Search (DFS)"),
         clEnumValN(Searcher::BFS, "bfs",
                    "use Breadth First Search (BFS), where scheduling decisions "
@@ -103,9 +104,10 @@ bool klee::userSearcherRequiresMD2U() {
 }
 
 
-Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PTree &processTree) {
+Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PTree &processTree, TimingSolver*& solver) {
   Searcher *searcher = nullptr;
   switch (type) {
+    case Searcher::WIP: searcher = new WIPSearcher(solver); break;
     case Searcher::DFS: searcher = new DFSSearcher(); break;
     case Searcher::BFS: searcher = new BFSSearcher(); break;
     case Searcher::RandomState: searcher = new RandomSearcher(rng); break;
@@ -124,14 +126,14 @@ Searcher *getNewSearcher(Searcher::CoreSearchType type, RNG &rng, PTree &process
 
 Searcher *klee::constructUserSearcher(Executor &executor) {
 
-  Searcher *searcher = getNewSearcher(CoreSearch[0], executor.theRNG, *executor.processTree);
+  Searcher *searcher = getNewSearcher(CoreSearch[0], executor.theRNG, *executor.processTree, executor.solver);
 
   if (CoreSearch.size() > 1) {
     std::vector<Searcher *> s;
     s.push_back(searcher);
 
     for (unsigned i = 1; i < CoreSearch.size(); i++)
-      s.push_back(getNewSearcher(CoreSearch[i], executor.theRNG, *executor.processTree));
+      s.push_back(getNewSearcher(CoreSearch[i], executor.theRNG, *executor.processTree, executor.solver));
 
     searcher = new InterleavedSearcher(s);
   }

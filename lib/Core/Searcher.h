@@ -12,6 +12,7 @@
 
 #include "ExecutionState.h"
 #include "PTree.h"
+#include "TimingSolver.h"
 #include "klee/ADT/RNG.h"
 #include "klee/System/Time.h"
 
@@ -61,6 +62,7 @@ namespace klee {
     virtual void printName(llvm::raw_ostream &os) = 0;
 
     enum CoreSearchType : std::uint8_t {
+      WIP,
       DFS,
       BFS,
       RandomState,
@@ -73,6 +75,20 @@ namespace klee {
       NURS_CPICnt,
       NURS_QC
     };
+  };
+
+  class WIPSearcher final : public Searcher {
+    TimingSolver*& solver;
+    std::vector<ExecutionState*> states; // TODO: use pq
+
+  public:
+    WIPSearcher(TimingSolver*& solver) : solver(solver) {};
+    ExecutionState &selectState() override;
+    void update(ExecutionState *current,
+                const std::vector<ExecutionState *> &addedStates,
+                const std::vector<ExecutionState *> &removedStates) override;
+    bool empty() override;
+    void printName(llvm::raw_ostream &os) override;
   };
 
   /// DFSSearcher implements depth-first exploration. All states are kept in

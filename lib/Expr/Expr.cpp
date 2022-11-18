@@ -243,7 +243,7 @@ ref<Expr> Expr::createFromKind(Kind k, std::vector<CreateArg> args) {
       assert(numArgs == 1 && args[0].isExpr() &&
              "invalid args array for given opcode");
       return NotOptimizedExpr::create(args[0].expr);
-      
+
     case Select:
       assert(numArgs == 3 && args[0].isExpr() &&
              args[1].isExpr() && args[2].isExpr() &&
@@ -606,7 +606,7 @@ int ReadExpr::compareContents(const Expr &b) const {
   return updates.compare(static_cast<const ReadExpr&>(b).updates);
 }
 
-ref<Expr> SelectExpr::create(ref<Expr> c, ref<Expr> t, ref<Expr> f) {
+ref<Expr> SelectExpr::create(ref<Expr> c, ref<Expr> t, ref<Expr> f, bool m) {
   Expr::Width kt = t->getWidth();
 
   assert(c->getWidth()==Bool && "type mismatch");
@@ -632,7 +632,7 @@ ref<Expr> SelectExpr::create(ref<Expr> c, ref<Expr> t, ref<Expr> f) {
     }
   }
   
-  return SelectExpr::alloc(c, t, f);
+  return SelectExpr::alloc(c, t, f, m);
 }
 
 /***/

@@ -282,7 +282,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
         // if one is null then by implication (we are at same pc)
         // we cannot reuse this local, so just ignore
       } else {
-        av = SelectExpr::create(inA, av, bv);
+        av = SelectExpr::create(inA, av, bv, true);
       }
     }
   }
@@ -300,7 +300,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
     for (unsigned i=0; i<mo->size; i++) {
       ref<Expr> av = wos->read8(i);
       ref<Expr> bv = otherOS->read8(i);
-      wos->write(i, SelectExpr::create(inA, av, bv));
+      wos->write(i, SelectExpr::create(inA, av, bv, true));
     }
   }
 
