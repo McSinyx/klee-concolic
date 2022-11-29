@@ -91,6 +91,8 @@ Todo: Shouldn't bool \c Xor just be written as not equal?
 class Expr {
 public:
   static unsigned count;
+  bool meta;
+
   static const unsigned MAGIC_HASH_CONSTANT = 39;
 
   /// The type of an expression is simply its width, in bits. 
@@ -210,7 +212,10 @@ protected:
   virtual int compareContents(const Expr &b) const = 0;
 
 public:
-  Expr() { Expr::count++; }
+  Expr() {
+    Expr::count++;
+    this->meta = false;
+  }
   virtual ~Expr() { Expr::count--; } 
 
   virtual Kind getKind() const = 0;
@@ -386,7 +391,9 @@ public:
   }
  
 protected:
-  BinaryExpr(const ref<Expr> &l, const ref<Expr> &r) : left(l), right(r) {}
+  BinaryExpr(const ref<Expr> &l, const ref<Expr> &r) : left(l), right(r) {
+    this->meta = l.get()->meta || r.get()->meta;
+  }
 
 public:
   static bool classof(const Expr *E) {
@@ -437,7 +444,9 @@ public:
   virtual ref<Expr> rebuild(ref<Expr> kids[]) const { return create(kids[0]); }
 
 private:
-  NotOptimizedExpr(const ref<Expr> &_src) : src(_src) {}
+  NotOptimizedExpr(const ref<Expr> &_src) : src(_src) {
+    this->meta = _src.get()->meta;
+  }
 
 protected:
   virtual int compareContents(const Expr &b) const {
@@ -601,8 +610,11 @@ public:
   virtual unsigned computeHash();
 
 private:
-  ReadExpr(const UpdateList &_updates, const ref<Expr> &_index) : 
-    updates(_updates), index(_index) { assert(updates.root); }
+  ReadExpr(const UpdateList &_updates, const ref<Expr> &_index)
+    : updates(_updates), index(_index) {
+    assert(updates.root);
+    this->meta = _index.get()->meta;
+  }
 
 public:
   static bool classof(const Expr *E) {
@@ -665,7 +677,9 @@ public:
 
 private:
   SelectExpr(const ref<Expr> &c, const ref<Expr> &t, const ref<Expr> &f,
-             const bool m) : cond(c), trueExpr(t), falseExpr(f), merge(m) {}
+             const bool m) : cond(c), trueExpr(t), falseExpr(f), merge(m) {
+    this->meta = c.get()->meta || t.get()->meta || f.get()->meta || m;
+  }
   SelectExpr(const ref<Expr> &c, const ref<Expr> &t, const ref<Expr> &f) 
     : SelectExpr(c, t, f, false) {}
 
@@ -730,6 +744,7 @@ public:
 private:
   ConcatExpr(const ref<Expr> &l, const ref<Expr> &r) : left(l), right(r) {
     width = l->getWidth() + r->getWidth();
+    this->meta = l.get()->meta || r.get()->meta;
   }
 
 public:
@@ -792,8 +807,10 @@ public:
   virtual unsigned computeHash();
 
 private:
-  ExtractExpr(const ref<Expr> &e, unsigned b, Width w) 
-    : expr(e),offset(b),width(w) {}
+  ExtractExpr(const ref<Expr> &e, unsigned b, Width w)
+    : expr(e),offset(b),width(w) {
+    this->meta = e.get()->meta;
+  }
 
 public:
   static bool classof(const Expr *E) {
@@ -841,7 +858,9 @@ public:
   static bool classof(const NotExpr *) { return true; }
 
 private:
-  NotExpr(const ref<Expr> &e) : expr(e) {}
+  NotExpr(const ref<Expr> &e) : expr(e) {
+    this->meta = e.get()->meta;
+  }
 
 protected:
   virtual int compareContents(const Expr &b) const {
@@ -860,7 +879,9 @@ public:
   Width width;
 
 public:
-  CastExpr(const ref<Expr> &e, Width w) : src(e), width(w) {}
+  CastExpr(const ref<Expr> &e, Width w) : src(e), width(w) {
+    this->meta = e.get()->meta;
+  }
 
   Width getWidth() const { return width; }
 
@@ -890,7 +911,9 @@ public:                                                          \
   static const Kind kind = _class_kind;                          \
   static const unsigned numKids = 1;                             \
 public:                                                          \
-    _class_kind ## Expr(ref<Expr> e, Width w) : CastExpr(e,w) {} \
+    _class_kind ## Expr(ref<Expr> e, Width w) : CastExpr(e,w) {  \
+      this->meta = e.get()->meta;                                \
+    }                                                            \
     static ref<Expr> alloc(const ref<Expr> &e, Width w) {        \
       ref<Expr> r(new _class_kind ## Expr(e, w));                \
       r->computeHash();                                          \
@@ -923,7 +946,9 @@ CAST_EXPR_CLASS(ZExt)
                                                                                \
   public:                                                                      \
     _class_kind##Expr(const ref<Expr> &l, const ref<Expr> &r)                  \
-        : BinaryExpr(l, r) {}                                                  \
+      : BinaryExpr(l, r) {                                                     \
+      this->meta = l.get()->meta || r.get()->meta;                             \
+    }                                                                          \
     static ref<Expr> alloc(const ref<Expr> &l, const ref<Expr> &r) {           \
       ref<Expr> res(new _class_kind##Expr(l, r));                              \
       res->computeHash();                                                      \
@@ -972,7 +997,9 @@ ARITHMETIC_EXPR_CLASS(AShr)
                                                                                \
   public:                                                                      \
     _class_kind##Expr(const ref<Expr> &l, const ref<Expr> &r)                  \
-        : CmpExpr(l, r) {}                                                     \
+      : CmpExpr(l, r) {                                                        \
+      this->meta = l.get()->meta || r.get()->meta;                             \
+    }                                                                          \
     static ref<Expr> alloc(const ref<Expr> &l, const ref<Expr> &r) {           \
       ref<Expr> res(new _class_kind##Expr(l, r));                              \
       res->computeHash();                                                      \

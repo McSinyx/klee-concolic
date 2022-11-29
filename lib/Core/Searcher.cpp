@@ -45,6 +45,10 @@ std::vector<ref<Expr>> split(const ref<Expr>& value) {
   std::vector<ref<Expr>> res {};
   if (!expr)
     return res;
+  if (!expr->meta) {
+    res.push_back(value);
+    return res;
+  }
 
   switch (expr->getKind()) {
   case Expr::NotOptimized:
@@ -137,7 +141,7 @@ size_t diversity(std::vector<ref<Expr>> variants) {
   std::set<Expr*> pointers {};
   for (const auto& v : variants)
     pointers.insert(v.get());
-  return pointers.size();
+  return pointers.size() && pointers.size() - 1;
 }
 
 ExecutionState &WIPSearcher::selectState() {
@@ -158,9 +162,8 @@ ExecutionState &WIPSearcher::selectState() {
       max = key;
       ptr = state;
     }
-    std::cout << max << ' ' << key << '\n';
   }
-  std::cout << '\n';
+  std::cout << max << '\n';
   return *ptr;
 }
 
