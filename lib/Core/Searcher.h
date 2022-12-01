@@ -79,7 +79,7 @@ namespace klee {
 
   class WIPSearcher final : public Searcher {
     TimingSolver*& solver;
-    std::vector<ExecutionState*> states; // TODO: use pq
+    std::vector<ExecutionState*> states;
 
   public:
     WIPSearcher(TimingSolver*& solver) : solver(solver) {};

@@ -31,10 +31,15 @@
 #include "llvm/IR/Module.h"
 #include "llvm/Support/CommandLine.h"
 
+#include <algorithm>
 #include <cassert>
 #include <cmath>
 #include <iostream>
-#include <set>
+#include <list>
+#include <unordered_map>
+#include <unordered_set>
+
+#define LRU 4096
 
 using namespace klee;
 using namespace llvm;
@@ -138,33 +143,40 @@ std::vector<ref<Expr>> split(const ref<Expr>& value) {
 
 // TODO: evaluate ne on pairs using solver
 size_t diversity(std::vector<ref<Expr>> variants) {
-  std::set<Expr*> pointers {};
+  std::unordered_set<Expr*> pointers {};
   for (const auto& v : variants)
     pointers.insert(v.get());
   return pointers.size() && pointers.size() - 1;
 }
 
 ExecutionState &WIPSearcher::selectState() {
-  // TODO: use pq
-  ExecutionState* ptr;
-  size_t max = 0;
-  for (auto& state : this->states) {
-    size_t key = 0;
-    for (const auto& frame : state->stack)
-      for (unsigned i = 0; i < frame.kf->numRegisters; ++i)
-        key += diversity(split(frame.locals[i].value));
-    for (const auto& memory : state->addressSpace.objects) {
-      auto& object = *memory.second.get();
-      for (unsigned i = 0; i < object.size; ++i)
-        key += diversity(split(object.read8(i)));
-    }
-    if (key >= max) {
-      max = key;
-      ptr = state;
-    }
+    return *this->states.front();
+}
+
+size_t priority(const ExecutionState* state) {
+  static std::unordered_map<std::uint32_t, size_t> cache {};
+  static std::list<std::uint32_t> cached {};
+  const auto search = cache.find(state->id);
+  if (search != cache.end())
+    return search->second;
+
+  size_t res = 0;
+  for (const auto& frame : state->stack)
+    for (unsigned i = 0; i < frame.kf->numRegisters; ++i)
+      res += diversity(split(frame.locals[i].value));
+  for (const auto& memory : state->addressSpace.objects) {
+    auto& object = *memory.second.get();
+    for (unsigned i = 0; i < object.size; ++i)
+      res += diversity(split(object.read8(i)));
   }
-  std::cout << max << '\n';
-  return *ptr;
+
+  cache[state->id] = res;
+  if (cache.size() > LRU) {
+    cache.erase(cached.back());
+    cached.pop_back();
+    cached.push_front(state->id);
+  }
+  return res;
 }
 
 void WIPSearcher::update(ExecutionState *current,
@@ -175,14 +187,19 @@ void WIPSearcher::update(ExecutionState *current,
 
   // remove states
   for (const auto state : removedStates) {
-    if (state == states.back()) {
-      states.pop_back();
+    if (state == this->states.back()) {
+      this->states.pop_back();
     } else {
-      auto it = std::find(states.begin(), states.end(), state);
-      assert(it != states.end() && "invalid state removed");
-      states.erase(it);
+      auto it = std::find(this->states.begin(), this->states.end(), state);
+      assert(it != this->states.end() && "invalid state removed");
+      this->states.erase(it);
     }
   }
+
+  std::make_heap(this->states.begin(), this->states.end(),
+                 [](const ExecutionState* l, const ExecutionState* r) {
+                   return priority(l) < priority(r);
+                 });
 }
 
 bool WIPSearcher::empty() {
