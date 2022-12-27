@@ -134,6 +134,102 @@ void klee::findSymbolicObjects(ref<Expr> e,
   findSymbolicObjects(&e, &e+1, results);
 }
 
+std::vector<ref<Expr>> klee::splitExpr(const ref<Expr>& value) {
+  const auto& expr = value.get();
+  std::vector<ref<Expr>> res {};
+  if (!expr)
+    return res;
+  if (!expr->meta) {
+    res.push_back(value);
+    return res;
+  }
+
+  switch (expr->getKind()) {
+  case Expr::NotOptimized:
+    for (const auto& src : splitExpr(static_cast<NotOptimizedExpr&>(*expr).src))
+      res.push_back(NotOptimizedExpr::create(src));
+    break;
+  case Expr::Read: {
+    const auto& read = static_cast<ReadExpr&>(*expr);
+    for (const auto& index : splitExpr(read.index))
+      res.push_back(ReadExpr::create(read.updates, index));
+  } break;
+  case Expr::Select: {
+    const auto& select = static_cast<SelectExpr&>(*expr);
+    if (select.merge) {
+      for (const auto& trueExpr : splitExpr(select.trueExpr))
+        res.push_back(trueExpr);
+      for (const auto& falseExpr : splitExpr(select.falseExpr))
+        res.push_back(falseExpr);
+    } else for (const auto& cond : splitExpr(select.cond))
+      for (const auto& trueExpr : splitExpr(select.trueExpr))
+        for (const auto& falseExpr : splitExpr(select.falseExpr))
+          res.push_back(SelectExpr::create(cond, trueExpr, falseExpr));
+  } break;
+  case Expr::Concat: {
+    const auto& concat = static_cast<ConcatExpr&>(*expr);
+    for (const auto& left : splitExpr(concat.getLeft()))
+      for (const auto& right : splitExpr(concat.getRight()))
+        res.push_back(ConcatExpr::create(left, right));
+  } break;
+  case Expr::Extract: {
+    const auto& extract = static_cast<ExtractExpr&>(*expr);
+    for (const auto& e : splitExpr(extract.expr))
+      res.push_back(ExtractExpr::create(e, extract.offset, extract.width));
+  } break;
+  case Expr::ZExt: {
+    const auto& zext = static_cast<ZExtExpr&>(*expr);
+    for (const auto& src : splitExpr(zext.src))
+      res.push_back(ZExtExpr::create(src, zext.width));
+  } break;
+  case Expr::SExt: {
+    const auto& sext = static_cast<SExtExpr&>(*expr);
+    for (const auto& src : splitExpr(sext.src))
+      res.push_back(SExtExpr::create(src, sext.width));
+  } break;
+#define SPLIT_AL_EXPR(_class_kind) case Expr::_class_kind: {   \
+    const auto& op = static_cast<_class_kind##Expr&>(*expr);   \
+    for (const auto& left : splitExpr(op.left))                    \
+      for (const auto& right : splitExpr(op.right))                \
+        res.push_back(_class_kind##Expr::create(left, right)); \
+  } break;
+  SPLIT_AL_EXPR(Add)
+  SPLIT_AL_EXPR(Sub)
+  SPLIT_AL_EXPR(Mul)
+  SPLIT_AL_EXPR(UDiv)
+  SPLIT_AL_EXPR(SDiv)
+  SPLIT_AL_EXPR(URem)
+  SPLIT_AL_EXPR(SRem)
+  SPLIT_AL_EXPR(And)
+  SPLIT_AL_EXPR(Or)
+  SPLIT_AL_EXPR(Xor)
+  SPLIT_AL_EXPR(Shl)
+  SPLIT_AL_EXPR(LShr)
+  SPLIT_AL_EXPR(AShr)
+  SPLIT_AL_EXPR(Eq)
+  SPLIT_AL_EXPR(Ne)
+  SPLIT_AL_EXPR(Ult)
+  SPLIT_AL_EXPR(Ule)
+  SPLIT_AL_EXPR(Ugt)
+  SPLIT_AL_EXPR(Uge)
+  SPLIT_AL_EXPR(Slt)
+  SPLIT_AL_EXPR(Sle)
+  SPLIT_AL_EXPR(Sgt)
+  SPLIT_AL_EXPR(Sge)
+#undef SPLIT_AL_EXPR
+  case Expr::Not:
+    for (const auto& e : splitExpr(static_cast<ExtractExpr&>(*expr).expr))
+      res.push_back(NotExpr::create(e));
+    break;
+  case Expr::Constant:
+    res.push_back(value);
+    break;
+  default:
+    assert(0 && "invalid expression kind");
+  }
+  return res;
+}
+
 typedef std::vector< ref<Expr> >::iterator A;
 template void klee::findSymbolicObjects<A>(A, A, std::vector<const Array*> &);
 

@@ -40,6 +40,9 @@ namespace klee {
                            InputIterator end,
                            std::vector<const Array*> &results);
 
+  // Split merged expressions back in to the original on for each patch.
+  std::vector<ref<Expr>> splitExpr(const ref<Expr>& value);
+
   class ConstantArrayFinder : public ExprVisitor {
   protected:
     ExprVisitor::Action visitRead(const ReadExpr &re);
