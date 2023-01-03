@@ -126,6 +126,7 @@ namespace klee {
     HANDLER(handleMalloc);
     HANDLER(handleMemalign);
     HANDLER(handleMarkGlobal);
+    HANDLER(handleMarkPatch);
     HANDLER(handleOpenMerge);
     HANDLER(handleCloseMerge);
     HANDLER(handleNew);

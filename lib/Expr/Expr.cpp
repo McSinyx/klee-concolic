@@ -606,7 +606,9 @@ int ReadExpr::compareContents(const Expr &b) const {
   return updates.compare(static_cast<const ReadExpr&>(b).updates);
 }
 
-ref<Expr> SelectExpr::create(ref<Expr> c, ref<Expr> t, ref<Expr> f, bool m) {
+ref<Expr> SelectExpr::create(ref<Expr> c, ref<Expr> t, ref<Expr> f,
+                             const std::uint64_t tPatch,
+                             const std::uint64_t fPatch) {
   Expr::Width kt = t->getWidth();
 
   assert(c->getWidth()==Bool && "type mismatch");
@@ -632,7 +634,7 @@ ref<Expr> SelectExpr::create(ref<Expr> c, ref<Expr> t, ref<Expr> f, bool m) {
     }
   }
   
-  return SelectExpr::alloc(c, t, f, m);
+  return SelectExpr::alloc(c, t, f, tPatch, fPatch);
 }
 
 /***/

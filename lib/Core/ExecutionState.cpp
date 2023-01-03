@@ -138,6 +138,10 @@ void ExecutionState::addSymbolic(const MemoryObject *mo, const Array *array) {
 
 /**/
 
+llvm::raw_ostream& klee::operator<<(llvm::raw_ostream& os, const ExecutionState& es) {
+  return os << es.id << "@" << &es << "#" << es.patchNo;
+}
+
 llvm::raw_ostream &klee::operator<<(llvm::raw_ostream &os, const MemoryMap &mm) {
   os << "{";
   MemoryMap::iterator it = mm.begin();
@@ -153,8 +157,7 @@ llvm::raw_ostream &klee::operator<<(llvm::raw_ostream &os, const MemoryMap &mm) 
 
 bool ExecutionState::merge(const ExecutionState &b) {
   if (DebugLogStateMerge)
-    llvm::errs() << "-- attempting merge of A:" << this << " with B:" << &b
-                 << "--\n";
+    llvm::errs() << "attempting merge of " << *this << " with " << b << "\n";
   if (pc != b.pc)
     return false;
 
@@ -192,23 +195,19 @@ bool ExecutionState::merge(const ExecutionState &b) {
                       commonConstraints.begin(), commonConstraints.end(),
                       std::inserter(bSuffix, bSuffix.end()));
   if (DebugLogStateMerge) {
-    llvm::errs() << "\tconstraint prefix: [";
-    for (std::set<ref<Expr> >::iterator it = commonConstraints.begin(),
-                                        ie = commonConstraints.end();
-         it != ie; ++it)
-      llvm::errs() << *it << ", ";
+    llvm::errs() << "constraint prefix: [\n";
+    for (const auto& pred : commonConstraints)
+      llvm::errs() << " " << pred << ",\n";
     llvm::errs() << "]\n";
-    llvm::errs() << "\tA suffix: [";
-    for (std::set<ref<Expr> >::iterator it = aSuffix.begin(),
-                                        ie = aSuffix.end();
-         it != ie; ++it)
-      llvm::errs() << *it << ", ";
+
+    llvm::errs() << *this << " suffix: [\n";
+    for (const auto& pred : aSuffix)
+      llvm::errs() << " " << pred << ",\n";
     llvm::errs() << "]\n";
-    llvm::errs() << "\tB suffix: [";
-    for (std::set<ref<Expr> >::iterator it = bSuffix.begin(),
-                                        ie = bSuffix.end();
-         it != ie; ++it)
-      llvm::errs() << *it << ", ";
+
+    llvm::errs() << b << " suffix: [\n";
+    for (const auto& pred : bSuffix)
+      llvm::errs() << " " << pred << ",\n";
     llvm::errs() << "]\n";
   }
 
@@ -221,7 +220,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
   // 2. We cannot have free'd any pre-existing object in one state
   // and not the other
 
-  if (DebugLogStateMerge) {
+  if (DebugLogStateMerge && false) {
     llvm::errs() << "\tchecking object states\n";
     llvm::errs() << "A: " << addressSpace.objects << "\n";
     llvm::errs() << "B: " << b.addressSpace.objects << "\n";
@@ -245,7 +244,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
     }
     if (ai->second.get() != bi->second.get()) {
       if (DebugLogStateMerge)
-        llvm::errs() << "\t\tmutated: " << ai->first->id << "\n";
+        llvm::errs() /* << "\t\tmutated: " << ai->first->id */ << "\n";
       mutated.insert(ai->first);
     }
   }
@@ -282,7 +281,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
         // if one is null then by implication (we are at same pc)
         // we cannot reuse this local, so just ignore
       } else {
-        av = SelectExpr::create(inA, av, bv, true);
+        av = SelectExpr::create(inA, av, bv, this->patchNo, b.patchNo);
       }
     }
   }
@@ -300,7 +299,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
     for (unsigned i=0; i<mo->size; i++) {
       ref<Expr> av = wos->read8(i);
       ref<Expr> bv = otherOS->read8(i);
-      wos->write(i, SelectExpr::create(inA, av, bv, true));
+      wos->write(i, SelectExpr::create(inA, av, bv, this->patchNo, b.patchNo));
     }
   }
 
@@ -311,6 +310,7 @@ bool ExecutionState::merge(const ExecutionState &b) {
     m.addConstraint(constraint);
   m.addConstraint(OrExpr::create(inA, inB));
 
+  this->patchNo = -1;
   return true;
 }
 

@@ -218,6 +218,9 @@ public:
   /// @brief The objects handling the klee_open_merge calls this state ran through
   std::vector<ref<MergeHandler>> openMergeStack;
 
+  /// @ brief The patch number during merge, starting from 1.
+  std::uint64_t patchNo = 0;
+
   /// @brief The numbers of times this state has run through Executor::stepInstruction
   std::uint64_t steppedInstructions = 0;
 
@@ -272,6 +275,8 @@ public:
   std::uint32_t getID() const { return id; };
   void setID() { id = nextID++; };
 };
+
+llvm::raw_ostream &operator<<(llvm::raw_ostream&, const ExecutionState&);
 
 struct ExecutionStateIDCompare {
   bool operator()(const ExecutionState *a, const ExecutionState *b) const {

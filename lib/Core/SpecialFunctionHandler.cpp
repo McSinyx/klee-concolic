@@ -103,6 +103,7 @@ static SpecialFunctionHandler::HandlerInfo handlerInfo[] = {
   add("klee_is_symbolic", handleIsSymbolic, true),
   add("klee_make_symbolic", handleMakeSymbolic, false),
   add("klee_mark_global", handleMarkGlobal, false),
+  add("klee_mark_patch", handleMarkPatch, false),
   add("klee_open_merge", handleOpenMerge, false),
   add("klee_close_merge", handleCloseMerge, false),
   add("klee_prefer_cex", handlePreferCex, false),
@@ -870,4 +871,16 @@ void SpecialFunctionHandler::handleMarkGlobal(ExecutionState &state,
     assert(!mo->isLocal);
     mo->isGlobal = true;
   }
+}
+
+void SpecialFunctionHandler::handleMarkPatch(ExecutionState &state,
+                                             KInstruction *target,
+                                             std::vector<ref<Expr>> &arguments) {
+  assert(arguments.size() == 1 &&
+         "invalid number of arguments to klee_mark_patch");
+  assert(isa<ConstantExpr>(arguments[0]) &&
+         "expect constant patch number argument to klee_mark_patch");
+  assert(!state.openMergeStack.empty() &&
+         "klee_mark_patch not called within merge area");
+  state.patchNo = cast<ConstantExpr>(arguments[0])->getLimitedValue();
 }

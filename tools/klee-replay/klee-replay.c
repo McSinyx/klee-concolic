@@ -518,6 +518,8 @@ void klee_mark_global(void *object) {
   ;
 }
 
+void klee_mark_patch(uint64_t patch_number) { }
+
 /*** HELPER FUNCTIONS ***/
 
 static void __emit_error(const char *msg) {

@@ -628,27 +628,31 @@ public:
 class SelectExpr : public NonConstantExpr {
 public:
   static const Kind kind = Select;
+  // XXX: should we worry about rebuild?
   static const unsigned numKids = 3;
   
 public:
   ref<Expr> cond, trueExpr, falseExpr;
+  std::uint64_t truePatch, falsePatch;
   bool merge;
 
 public:
   static ref<Expr> alloc(const ref<Expr> &c, const ref<Expr> &t,
-                         const ref<Expr> &f, const bool m) {
-    ref<Expr> r(new SelectExpr(c, t, f, m));
+                         const ref<Expr> &f, const std::uint64_t tPatch,
+                         const std::uint64_t fPatch) {
+    ref<Expr> r(new SelectExpr(c, t, f, tPatch, fPatch));
     r->computeHash();
     return r;
   }
   static ref<Expr> alloc(const ref<Expr> &c, const ref<Expr> &t,
                          const ref<Expr> &f) {
-    return alloc(c, t, f, false);
+    return alloc(c, t, f, 0, 0);
   }
 
-  static ref<Expr> create(ref<Expr> c, ref<Expr> t, ref<Expr> f, bool merge);
+  static ref<Expr> create(ref<Expr> c, ref<Expr> t, ref<Expr> f,
+    const std::uint64_t tPatch, const std::uint64_t fPatch);
   static ref<Expr> create(ref<Expr> c, ref<Expr> t, ref<Expr> f) {
-      return create(c, t, f, false);
+      return create(c, t, f, 0, 0);
   }
 
   Width getWidth() const { return trueExpr->getWidth(); }
@@ -677,11 +681,14 @@ public:
 
 private:
   SelectExpr(const ref<Expr> &c, const ref<Expr> &t, const ref<Expr> &f,
-             const bool m) : cond(c), trueExpr(t), falseExpr(f), merge(m) {
-    this->meta = c.get()->meta || t.get()->meta || f.get()->meta || m;
+             const std::uint64_t tPatch, const std::uint64_t fPatch)
+    : cond(c), trueExpr(t), falseExpr(f),
+      truePatch(tPatch), falsePatch(fPatch) {
+    this->merge = tPatch != fPatch;
+    this->meta = this->merge || c.get()->meta || t.get()->meta || f.get()->meta;
   }
   SelectExpr(const ref<Expr> &c, const ref<Expr> &t, const ref<Expr> &f) 
-    : SelectExpr(c, t, f, false) {}
+    : SelectExpr(c, t, f, 0, 0) {}
 
 public:
   static bool classof(const Expr *E) {
