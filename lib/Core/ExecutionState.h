@@ -145,14 +145,6 @@ struct CleanupPhaseUnwindingInformation : public UnwindingInformation {
 
 /// @brief ExecutionState representing a path under exploration
 class ExecutionState {
-#ifdef KLEE_UNITTEST
-public:
-#else
-private:
-#endif
-  // copy ctor
-  ExecutionState(const ExecutionState &state);
-
 public:
   using stack_ty = std::vector<StackFrame>;
 
@@ -248,6 +240,9 @@ public:
   // provide this function only in the context of unittests
   ExecutionState() = default;
 #endif
+  // copy ctor
+  ExecutionState(const ExecutionState&);
+
   // only to create the initial state
   explicit ExecutionState(KFunction *kf);
   // no copy assignment, use copy constructor

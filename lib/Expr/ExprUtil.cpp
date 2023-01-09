@@ -12,6 +12,7 @@
 #include "klee/Expr/ExprHashMap.h"
 #include "klee/Expr/ExprVisitor.h"
 
+#include <algorithm>
 #include <set>
 
 using namespace klee;
@@ -134,64 +135,91 @@ void klee::findSymbolicObjects(ref<Expr> e,
   findSymbolicObjects(&e, &e+1, results);
 }
 
-std::vector<ref<Expr>> klee::splitExpr(const ref<Expr>& value) {
+std::uint64_t pickPatchNo(std::uint64_t m, std::uint64_t n) {
+  // 0 means original, uint64_t max means merged.
+  return (0ull < n && n < 0xffffffffffffffffull) ? n : m;
+}
+
+std::vector<std::pair<std::uint64_t, ref<Expr>>>
+klee::splitExpr(const ref<Expr>& value) {
   const auto& expr = value.get();
-  std::vector<ref<Expr>> res {};
+  std::vector<std::pair<std::uint64_t, ref<Expr>>> res {};
   if (!expr)
     return res;
   if (!expr->meta) {
-    res.push_back(value);
+    res.push_back(std::make_pair(0, value));
     return res;
   }
 
   switch (expr->getKind()) {
   case Expr::NotOptimized:
     for (const auto& src : splitExpr(static_cast<NotOptimizedExpr&>(*expr).src))
-      res.push_back(NotOptimizedExpr::create(src));
+      res.push_back(std::make_pair(src.first,
+                                   NotOptimizedExpr::create(src.second)));
     break;
   case Expr::Read: {
     const auto& read = static_cast<ReadExpr&>(*expr);
     for (const auto& index : splitExpr(read.index))
-      res.push_back(ReadExpr::create(read.updates, index));
+      res.push_back(std::make_pair(index.first,
+                                   ReadExpr::create(read.updates,
+                                                    index.second)));
   } break;
   case Expr::Select: {
     const auto& select = static_cast<SelectExpr&>(*expr);
     if (select.merge) {
-      for (const auto& trueExpr : splitExpr(select.trueExpr))
-        res.push_back(trueExpr);
-      for (const auto& falseExpr : splitExpr(select.falseExpr))
-        res.push_back(falseExpr);
+      for (const auto& truePair : splitExpr(select.trueExpr))
+        res.push_back(std::make_pair(pickPatchNo(select.truePatch,
+                                                 truePair.first),
+                                     truePair.second));
+      for (const auto& falsePair : splitExpr(select.falseExpr))
+        res.push_back(std::make_pair(pickPatchNo(select.falsePatch,
+                                                 falsePair.first),
+                                     falsePair.second));
     } else for (const auto& cond : splitExpr(select.cond))
       for (const auto& trueExpr : splitExpr(select.trueExpr))
-        for (const auto& falseExpr : splitExpr(select.falseExpr))
-          res.push_back(SelectExpr::create(cond, trueExpr, falseExpr));
+        for (const auto& falseExpr : splitExpr(select.falseExpr)) {
+          auto patchNo = pickPatchNo(cond.first, pickPatchNo(trueExpr.first,
+                                                             falseExpr.first));
+          res.push_back(std::make_pair(patchNo,
+                                       SelectExpr::create(cond.second,
+                                                          trueExpr.second,
+                                                          falseExpr.second)));
+        }
   } break;
   case Expr::Concat: {
     const auto& concat = static_cast<ConcatExpr&>(*expr);
     for (const auto& left : splitExpr(concat.getLeft()))
       for (const auto& right : splitExpr(concat.getRight()))
-        res.push_back(ConcatExpr::create(left, right));
+        res.push_back(std::make_pair(pickPatchNo(left.first, right.first),
+                                     ConcatExpr::create(left.second,
+                                                        right.second)));
   } break;
   case Expr::Extract: {
     const auto& extract = static_cast<ExtractExpr&>(*expr);
     for (const auto& e : splitExpr(extract.expr))
-      res.push_back(ExtractExpr::create(e, extract.offset, extract.width));
+      res.push_back(std::make_pair(e.first,
+                                   ExtractExpr::create(e.second, extract.offset,
+                                                       extract.width)));
   } break;
   case Expr::ZExt: {
     const auto& zext = static_cast<ZExtExpr&>(*expr);
     for (const auto& src : splitExpr(zext.src))
-      res.push_back(ZExtExpr::create(src, zext.width));
+      res.push_back(std::make_pair(src.first,
+                                   ZExtExpr::create(src.second, zext.width)));
   } break;
   case Expr::SExt: {
     const auto& sext = static_cast<SExtExpr&>(*expr);
     for (const auto& src : splitExpr(sext.src))
-      res.push_back(SExtExpr::create(src, sext.width));
+      res.push_back(std::make_pair(src.first,
+                                   SExtExpr::create(src.second, sext.width)));
   } break;
-#define SPLIT_AL_EXPR(_class_kind) case Expr::_class_kind: {   \
-    const auto& op = static_cast<_class_kind##Expr&>(*expr);   \
-    for (const auto& left : splitExpr(op.left))                    \
-      for (const auto& right : splitExpr(op.right))                \
-        res.push_back(_class_kind##Expr::create(left, right)); \
+#define SPLIT_AL_EXPR(_class_kind) case Expr::_class_kind: {                   \
+    const auto& op = static_cast<_class_kind##Expr&>(*expr);                   \
+    for (const auto& left : splitExpr(op.left))                                \
+      for (const auto& right : splitExpr(op.right))                            \
+        res.push_back(std::make_pair(pickPatchNo(left.first, right.first),     \
+                                     _class_kind##Expr::create(left.second,    \
+                                                               right.second)));\
   } break;
   SPLIT_AL_EXPR(Add)
   SPLIT_AL_EXPR(Sub)
@@ -219,10 +247,10 @@ std::vector<ref<Expr>> klee::splitExpr(const ref<Expr>& value) {
 #undef SPLIT_AL_EXPR
   case Expr::Not:
     for (const auto& e : splitExpr(static_cast<ExtractExpr&>(*expr).expr))
-      res.push_back(NotExpr::create(e));
+      res.push_back(std::make_pair(e.first, NotExpr::create(e.second)));
     break;
   case Expr::Constant:
-    res.push_back(value);
+    res.push_back(std::make_pair(0, value));
     break;
   default:
     assert(0 && "invalid expression kind");

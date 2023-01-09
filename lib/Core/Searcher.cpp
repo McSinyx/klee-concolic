@@ -47,10 +47,10 @@ using namespace llvm;
 
 
 // TODO: evaluate ne on pairs using solver
-size_t diversity(std::vector<ref<Expr>> variants) {
+size_t diversity(std::vector<std::pair<std::uint64_t, ref<Expr>>> variants) {
   std::unordered_set<Expr*> pointers {};
   for (const auto& v : variants)
-    pointers.insert(v.get());
+    pointers.insert(v.second.get());
   return pointers.size() && pointers.size() - 1;
 }
 

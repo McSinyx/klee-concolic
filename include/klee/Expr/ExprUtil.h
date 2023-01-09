@@ -13,6 +13,7 @@
 #include "klee/Expr/ExprVisitor.h"
 
 #include <vector>
+#include <utility>
 
 namespace klee {
   class Array;
@@ -41,7 +42,8 @@ namespace klee {
                            std::vector<const Array*> &results);
 
   // Split merged expressions back in to the original on for each patch.
-  std::vector<ref<Expr>> splitExpr(const ref<Expr>& value);
+  std::vector<std::pair<std::uint64_t, ref<Expr>>>
+  splitExpr(const ref<Expr>& value);
 
   class ConstantArrayFinder : public ExprVisitor {
   protected:

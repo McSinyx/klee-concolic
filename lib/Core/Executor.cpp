@@ -87,6 +87,8 @@ typedef unsigned TypeSize;
 #include <iomanip>
 #include <iosfwd>
 #include <limits>
+#include <map>
+#include <set>
 #include <sstream>
 #include <string>
 #include <sys/mman.h>
@@ -3666,10 +3668,38 @@ static std::string terminationTypeFileExtension(StateTerminationType type) {
 };
 
 void Executor::terminateStateOnExit(ExecutionState &state) {
-  if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state)))
-    interpreterHandler->processTestCase(
-        state, nullptr,
-        terminationTypeFileExtension(StateTerminationType::Exit).c_str());
+  std::vector<std::map<std::uint64_t, ref<Expr>>> constraints {};
+  std::set<std::uint64_t> revisions;
+  for (const auto& c : state.constraints) {
+    std::map<std::uint64_t, ref<Expr>> pc {};
+    for (const auto& p : splitExpr(c)) {
+      pc[p.first] = p.second;
+      revisions.insert(p.first);
+      llvm::errs() << " " << p.second << "\n";
+    }
+    constraints.push_back(pc);
+    llvm::errs() << "\n";
+  }
+
+  for (const auto patchNo : revisions) {
+    ExecutionState s {state};
+    ConstraintManager cm(s.constraints);
+    cm.clearConstraints();
+    for (auto it = state.constraints.begin();
+         it != state.constraints.end(); ++it) {
+      const auto i = it - state.constraints.begin();
+      const auto p = constraints[i].find(patchNo);
+      // llvm::errs() << "patch " << patchNo << " "
+      //              << (p != constraints[i].end() ? p->second : *it) << "\n";
+      cm.addConstraint(p != constraints[i].end() ? p->second : *it);
+    }
+
+    if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state)))
+      interpreterHandler->processTestCase(
+          s, nullptr,
+          terminationTypeFileExtension(StateTerminationType::Exit).c_str());
+  }
+  // communicate back to searcher
 
   interpreterHandler->incPathsCompleted();
   terminateState(state);

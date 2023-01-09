@@ -160,6 +160,10 @@ void ConstraintManager::addConstraint(const ref<Expr> &e) {
   addConstraintInternal(simplified);
 }
 
+void ConstraintManager::clearConstraints() noexcept {
+    this->constraints.constraints.clear();
+}
+
 ConstraintManager::ConstraintManager(ConstraintSet &_constraints)
     : constraints(_constraints) {}
 

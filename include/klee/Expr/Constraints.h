@@ -64,6 +64,9 @@ public:
   /// \param constraint
   void addConstraint(const ref<Expr> &constraint);
 
+  /// Erase all elements from the constraint set
+  void clearConstraints() noexcept;
+
 private:
   /// Rewrite set of constraints using the visitor
   /// \param visitor constraint rewriter
