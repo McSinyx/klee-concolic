@@ -325,7 +325,7 @@ public:
 
   void setInterpreter(Interpreter *i);
 
-  void processTestCase(const ExecutionState  &state,
+  std::string processTestCase(const ExecutionState  &state,
                        const char *errorMessage,
                        const char *errorSuffix);
 
@@ -471,7 +471,7 @@ KleeHandler::openTestFile(const std::string &suffix, unsigned id) {
 
 
 /* Outputs all files (.ktest, .kquery, .cov etc.) describing a test case */
-void KleeHandler::processTestCase(const ExecutionState &state,
+std::string KleeHandler::processTestCase(const ExecutionState &state,
                                   const char *errorMessage,
                                   const char *errorSuffix) {
   if (!WriteNone) {
@@ -592,6 +592,7 @@ void KleeHandler::processTestCase(const ExecutionState &state,
       if (f)
         *f << "Time to generate test case: " << elapsed_time << '\n';
     }
+    return getOutputFilename(getTestFilename("smt2", id));
   } // if (!WriteNone)
 
   if (errorMessage && OptExitOnError) {

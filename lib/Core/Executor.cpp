@@ -78,6 +78,9 @@ typedef unsigned TypeSize;
 #endif
 #include "llvm/Support/raw_ostream.h"
 
+#include <z3.h>
+#include <z3++.h>
+
 #include <algorithm>
 #include <cassert>
 #include <cerrno>
@@ -90,6 +93,7 @@ typedef unsigned TypeSize;
 #include <map>
 #include <set>
 #include <sstream>
+#include <stdio.h>
 #include <string>
 #include <sys/mman.h>
 #include <vector>
@@ -3667,6 +3671,13 @@ static std::string terminationTypeFileExtension(StateTerminationType type) {
   return ret;
 };
 
+// Return if name matches arg\d\d
+bool isSymbArg(std::string name) {
+  return (name[0] == 'a' && name[1] == 'r' && name[2] == 'g'
+          && '0' <= name[3] && name[3] <= '9'
+          && '0' <= name[4] && name[4] <= '9' && name[5] == '\0');
+}
+
 void Executor::terminateStateOnExit(ExecutionState &state) {
   std::vector<std::map<std::uint64_t, ref<Expr>>> constraints {};
   std::set<std::uint64_t> revisions;
@@ -3675,29 +3686,58 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
     for (const auto& p : splitExpr(c)) {
       pc[p.first] = p.second;
       revisions.insert(p.first);
-      llvm::errs() << " " << p.second << "\n";
     }
     constraints.push_back(pc);
-    llvm::errs() << "\n";
   }
 
-  for (const auto patchNo : revisions) {
-    ExecutionState s {state};
-    ConstraintManager cm(s.constraints);
-    cm.clearConstraints();
-    for (auto it = state.constraints.begin();
-         it != state.constraints.end(); ++it) {
-      const auto i = it - state.constraints.begin();
-      const auto p = constraints[i].find(patchNo);
-      // llvm::errs() << "patch " << patchNo << " "
-      //              << (p != constraints[i].end() ? p->second : *it) << "\n";
-      cm.addConstraint(p != constraints[i].end() ? p->second : *it);
+  std::vector<std::string> formulae {};
+  if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state))) {
+    for (const auto patchNo : revisions) {
+      ExecutionState s {state};
+      ConstraintManager cm(s.constraints);
+      cm.clearConstraints();
+      for (auto it = state.constraints.begin();
+           it != state.constraints.end(); ++it) {
+        const auto i = it - state.constraints.begin();
+        const auto p = constraints[i].find(patchNo);
+        cm.addConstraint(p != constraints[i].end() ? p->second
+                                                   : constraints[i][0]);
+      }
+
+      formulae.push_back(interpreterHandler->processTestCase(
+        s, nullptr,
+        terminationTypeFileExtension(StateTerminationType::Exit).c_str()));
     }
 
-    if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state)))
-      interpreterHandler->processTestCase(
-          s, nullptr,
-          terminationTypeFileExtension(StateTerminationType::Exit).c_str());
+    for (auto i = formulae.size(); i--;)
+      for (auto j = i; j--;) {
+        const auto& command = "symbdiff " + formulae[i] + " " + formulae[j];
+        FILE* pipe = popen(command.c_str(), "r");
+        std::string formula {""};
+        char buffer[128];
+        while (!feof(pipe))
+          if (fgets(buffer, 128, pipe) != NULL)
+            formula += buffer;
+        if (pclose(pipe))
+          continue;
+
+        static z3::context c;
+        static z3::solver s {c};
+        s.reset();
+        s.from_string(formula.c_str());
+        if (s.check() != z3::sat)
+          continue;
+        z3::model m = s.get_model();
+        for (auto k = m.size(); k--;)
+          if (isSymbArg(m[k].name().str())) {
+            const auto& expr = m.eval(m[k]());
+            std::string binary {""};
+            for (int a = 0; a < 1; ++a) // FIXME: stop hardcoding symb arg len
+              binary += z3::select(expr, a).simplify().as_uint64();
+            llvm::errs() << m[k].name().str() << " " << binary << "\n";
+            // TODO: use these arguments for all patches
+          }
+      }
   }
   // communicate back to searcher
 

@@ -43,9 +43,9 @@ public:
   virtual void incPathsCompleted() = 0;
   virtual void incPathsExplored(std::uint32_t num = 1) = 0;
 
-  virtual void processTestCase(const ExecutionState &state,
-                               const char *err,
-                               const char *suffix) = 0;
+  virtual std::string processTestCase(const ExecutionState &state,
+                                      const char *err,
+                                      const char *suffix) = 0;
 };
 
 class Interpreter {
