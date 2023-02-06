@@ -146,6 +146,12 @@ private:
   /// globals that have no representative object (i.e. functions).
   std::map<const llvm::GlobalValue*, ref<ConstantExpr> > globalAddresses;
 
+  /// Size of symbolic arguments.
+  std::vector<size_t> symArgs;
+
+  /// Size of symbolic outputs.
+  std::map<std::string, size_t> symOuts;
+
   /// Map of legal function addresses to the corresponding Function.
   /// Used to validate and dereference function pointers.
   std::unordered_map<std::uint64_t, llvm::Function*> legalFunctions;

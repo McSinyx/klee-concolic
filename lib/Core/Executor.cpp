@@ -452,6 +452,13 @@ cl::opt<bool> DebugCheckForImpliedValues(
 
 } // namespace
 
+// Return if name matches arg\d\d
+bool isSymbArg(std::string name) {
+  return (name[0] == 'a' && name[1] == 'r' && name[2] == 'g'
+          && '0' <= name[3] && name[3] <= '9'
+          && '0' <= name[4] && name[4] <= '9' && name[5] == '\0');
+}
+
 // XXX hack
 extern "C" unsigned dumpStates, dumpPTree;
 unsigned dumpStates = 0, dumpPTree = 0;
@@ -3671,13 +3678,6 @@ static std::string terminationTypeFileExtension(StateTerminationType type) {
   return ret;
 };
 
-// Return if name matches arg\d\d
-bool isSymbArg(std::string name) {
-  return (name[0] == 'a' && name[1] == 'r' && name[2] == 'g'
-          && '0' <= name[3] && name[3] <= '9'
-          && '0' <= name[4] && name[4] <= '9' && name[5] == '\0');
-}
-
 void Executor::terminateStateOnExit(ExecutionState &state) {
   std::vector<std::map<std::uint64_t, ref<Expr>>> constraints {};
   std::set<std::uint64_t> revisions;
@@ -3711,7 +3711,10 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
 
     for (auto i = formulae.size(); i--;)
       for (auto j = i; j--;) {
-        const auto& command = "symbdiff " + formulae[i] + " " + formulae[j];
+        auto command = "symbdiff " + formulae[i] + " " + formulae[j];
+        for (const auto& out : this->symOuts)
+          command += " " + std::to_string(out.second);
+        llvm::errs() << command << "\n";
         FILE* pipe = popen(command.c_str(), "r");
         std::string formula {""};
         char buffer[128];
@@ -3728,15 +3731,18 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
         if (s.check() != z3::sat)
           continue;
         z3::model m = s.get_model();
-        for (auto k = m.size(); k--;)
-          if (isSymbArg(m[k].name().str())) {
+        for (auto k = m.size(); k--;) {
+          const auto& name = m[k].name().str();
+          if (isSymbArg(name)) {
             const auto& expr = m.eval(m[k]());
             std::string binary {""};
-            for (int a = 0; a < 1; ++a) // FIXME: stop hardcoding symb arg len
-              binary += z3::select(expr, a).simplify().as_uint64();
-            llvm::errs() << m[k].name().str() << " " << binary << "\n";
+            const auto size = this->symArgs[std::atoi(name.c_str() + 3)];
+            for (int b = 0; b < size; ++b)
+              binary += z3::select(expr, b).simplify().as_uint64();
+            llvm::errs() << name << " " << binary << "\n";
             // TODO: use these arguments for all patches
           }
+        }
       }
   }
   // communicate back to searcher
@@ -4384,7 +4390,16 @@ void Executor::executeMakeSymbolic(ExecutionState &state,
     const Array *array = arrayCache.CreateArray(uniqueName, mo->size);
     bindObjectInState(state, mo, false, array);
     state.addSymbolic(mo, array);
-    
+    // string::starts_with requires C++20
+    if (isSymbArg(uniqueName)) {
+      assert(std::atoi(name.c_str() + 3) == this->symArgs.size());
+      this->symArgs.push_back(mo->size - 1); // string's null termination
+    } else if (uniqueName[0] == 'o' && uniqueName[1] == 'u'
+               && uniqueName[2] == 't' && uniqueName[3] == '!') {
+      assert(this->symOuts.find(uniqueName) == this->symOuts.end());
+      this->symOuts[uniqueName] = mo->size;
+    }
+
     std::map< ExecutionState*, std::vector<SeedInfo> >::iterator it = 
       seedMap.find(&state);
     if (it!=seedMap.end()) { // In seed mode we need to add this as a
