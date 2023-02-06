@@ -453,10 +453,17 @@ cl::opt<bool> DebugCheckForImpliedValues(
 } // namespace
 
 // Return if name matches arg\d\d
-bool isSymbArg(std::string name) {
+bool isSymArg(std::string name) {
   return (name[0] == 'a' && name[1] == 'r' && name[2] == 'g'
           && '0' <= name[3] && name[3] <= '9'
           && '0' <= name[4] && name[4] <= '9' && name[5] == '\0');
+}
+
+// Return if name matches out!.*
+bool isSymOut(std::string name) {
+  // string::starts_with requires C++20
+  return (name[0] == 'o' && name[1] == 'u' && name[2] == 't' && name[3] == '!'
+          && '0' <= name[name.size() - 1] && name[name.size() - 1] <= '9');
 }
 
 // XXX hack
@@ -3712,8 +3719,9 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
     for (auto i = formulae.size(); i--;)
       for (auto j = i; j--;) {
         auto command = "symbdiff " + formulae[i] + " " + formulae[j];
-        for (const auto& out : this->symOuts)
+        for (const auto& out : this->symOuts) {
           command += " " + std::to_string(out.second);
+        }
         llvm::errs() << command << "\n";
         FILE* pipe = popen(command.c_str(), "r");
         std::string formula {""};
@@ -3733,14 +3741,21 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
         z3::model m = s.get_model();
         for (auto k = m.size(); k--;) {
           const auto& name = m[k].name().str();
-          if (isSymbArg(name)) {
+          if (isSymArg(name)) {
             const auto& expr = m.eval(m[k]());
             std::string binary {""};
             const auto size = this->symArgs[std::atoi(name.c_str() + 3)];
             for (int b = 0; b < size; ++b)
               binary += z3::select(expr, b).simplify().as_uint64();
-            llvm::errs() << name << " " << binary << "\n";
-            // TODO: use these arguments for all patches
+            llvm::errs() << name << " " << (int) *binary.c_str() << "\n";
+          } else if (isSymOut(name.substr(0, name.size() - 2))) {
+            // TODO: use arguments for all patches
+            const auto& expr = m.eval(m[k]());
+            std::string binary {""};
+            const auto size = this->symOuts[name.substr(0, name.size() - 2)];
+            for (int b = 0; b < size; ++b)
+              binary += z3::select(expr, b).simplify().as_uint64();
+            llvm::errs() << name << " " << *(int *) binary.c_str() << "\n";
           }
         }
       }
@@ -4390,12 +4405,12 @@ void Executor::executeMakeSymbolic(ExecutionState &state,
     const Array *array = arrayCache.CreateArray(uniqueName, mo->size);
     bindObjectInState(state, mo, false, array);
     state.addSymbolic(mo, array);
-    // string::starts_with requires C++20
-    if (isSymbArg(uniqueName)) {
+
+    if (isSymArg(uniqueName)) {
       assert(std::atoi(name.c_str() + 3) == this->symArgs.size());
       this->symArgs.push_back(mo->size - 1); // string's null termination
-    } else if (uniqueName[0] == 'o' && uniqueName[1] == 'u'
-               && uniqueName[2] == 't' && uniqueName[3] == '!') {
+    } else if (isSymOut(uniqueName)) {
+      // FIXME: out!*!{a,b} somehow leaks here
       assert(this->symOuts.find(uniqueName) == this->symOuts.end());
       this->symOuts[uniqueName] = mo->size;
     }
