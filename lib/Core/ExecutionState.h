@@ -221,6 +221,9 @@ public:
   /// @ brief The patch number, starting from 1; 0 being the original.
   std::uint64_t patchNo = 0;
 
+  /// @ brief Terminated on exit, awaiting comparison.
+  std::string formula = "";
+
   /// @brief The numbers of times this state has run through Executor::stepInstruction
   std::uint64_t steppedInstructions = 0;
 

@@ -3306,7 +3306,8 @@ void Executor::updateStates(ExecutionState *current) {
     if (it3 != seedMap.end())
       seedMap.erase(it3);
     processTree->remove(es->ptreeNode);
-    delete es;
+    if (es->formula.empty())
+      delete es;
   }
   removedStates.clear();
 }
@@ -3642,6 +3643,8 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
         terminationTypeFileExtension(StateTerminationType::Exit).c_str());
 
   interpreterHandler->incPathsCompleted();
+  getConstraintLog(state, state.formula, Interpreter::SMTLIB2);
+  exitStates.insert(&state);
   terminateState(state);
 }
 
