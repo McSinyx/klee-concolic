@@ -15,6 +15,7 @@
 #ifndef KLEE_EXECUTOR_H
 #define KLEE_EXECUTOR_H
 
+#include "Differentiator.h"
 #include "ExecutionState.h"
 #include "UserSearcher.h"
 
@@ -31,6 +32,9 @@
 
 #include "llvm/ADT/Twine.h"
 #include "llvm/Support/raw_ostream.h"
+
+#include <z3.h>
+#include <z3++.h>
 
 #include <map>
 #include <memory>
@@ -112,6 +116,8 @@ private:
   TimingSolver *solver;
   MemoryManager *memory;
   std::set<ExecutionState*, ExecutionStateIDCompare> states;
+  std::set<ExecutionState*, ExecutionStateIDCompare> exitStates;
+  std::vector<Differentiator> diffTests;
   StatsTracker *statsTracker;
   TreeStreamWriter *pathWriter, *symPathWriter;
   SpecialFunctionHandler *specialFunctionHandler;
@@ -144,6 +150,12 @@ private:
   /// Map of globals to their bound address. This also includes
   /// globals that have no representative object (i.e. functions).
   std::map<const llvm::GlobalValue*, ref<ConstantExpr> > globalAddresses;
+
+  /// Size of symbolic arguments.
+  std::vector<size_t> symArgs;
+
+  /// Size of symbolic outputs.
+  std::map<std::string, size_t> symOuts;
 
   /// Map of legal function addresses to the corresponding Function.
   /// Used to validate and dereference function pointers.
@@ -410,7 +422,14 @@ private:
   const InstructionInfo & getLastNonKleeInternalInstruction(const ExecutionState &state,
       llvm::Instruction** lastInstruction);
 
-  /// Remove state from queue and delete state
+  /// Extract differencial test from SMT model
+  void extractDifferentiator(uint64_t, uint64_t, const z3::model&);
+
+  /// Compare with other exit states for possible differencial tests
+  void searchDifferentiators(ExecutionState *state);
+
+  /// Remove state from queue and delete state. This function should only be
+  /// used in the termination functions below.
   void terminateState(ExecutionState &state);
 
   /// Call exit handler and terminate state normally

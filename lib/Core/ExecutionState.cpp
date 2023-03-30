@@ -348,7 +348,36 @@ void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
   }
 }
 
+bool isMetaConstraint(ref<Expr> e) {
+  if (e.get()->getKind() != Expr::Eq)
+    return false;
+  const auto eq = dyn_cast<EqExpr>(e.get());
+  if (eq->left.get()->getKind() != Expr::Constant)
+    return false;
+  const auto constant = dyn_cast<ConstantExpr>(eq->left.get());
+  if (constant->isFalse()) // the else branch
+    return isMetaConstraint(eq->right);
+
+  if (eq->right.get()->getKind() != Expr::Concat)
+    return false;
+  const auto concat = dyn_cast<ConcatExpr>(eq->right.get());
+  if (concat->getLeft().get()->getKind() != Expr::Read)
+    return false;
+
+  const auto read = dyn_cast<ReadExpr>(concat->getLeft().get());
+  const auto& name = read->updates.root->name;
+  // string::starts_with requires C++20
+  if (name.substr(0, 8) != "__choose")
+    return false;
+  for (const auto c : name.substr(8))
+    if ('0' > c || c > '9')
+      return false;
+  return true;
+}
+
 void ExecutionState::addConstraint(ref<Expr> e) {
+  if (isMetaConstraint(e))
+    return;
   ConstraintManager c(constraints);
   c.addConstraint(e);
 }

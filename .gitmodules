@@ -1,0 +1,3 @@
+[submodule "tools/symbdiff"]
+	path = tools/symbdiff
+	url = https://git.sr.ht/~cnx/symbdiff

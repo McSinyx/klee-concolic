@@ -89,8 +89,10 @@ typedef unsigned TypeSize;
 #include <iosfwd>
 #include <limits>
 #include <sstream>
+#include <stdlib.h>
 #include <string>
 #include <sys/mman.h>
+#include <unistd.h>
 #include <vector>
 
 using namespace llvm;
@@ -3636,6 +3638,86 @@ static std::string terminationTypeFileExtension(StateTerminationType type) {
   return ret;
 };
 
+void Executor::extractDifferentiator(uint64_t a, uint64_t b, const z3::model& m) {
+  auto test = Differentiator {a, b};
+  for (auto k = m.size(); k--;) {
+    const auto& name = m[k].name().str();
+    if (isSymArg(name)) {
+      const uint8_t i = std::atoi(name.c_str() + 3);
+      test.args[i] = "";
+      const auto& expr = m.eval(m[k]());
+      for (uint8_t b = 0; b < this->symArgs[i]; ++b) {
+        const auto c = z3::select(expr, b).simplify().as_uint64();
+        assert(c <= std::numeric_limits<unsigned char>::max());
+        test.args[i].push_back((unsigned char) c);
+      }
+    } else if (isSymOut(name.substr(0, name.size() - 2))) {
+      // TODO: use arguments for all patches
+      const auto& expr = m.eval(m[k]());
+      std::string binary {""};
+      const auto size = this->symOuts[name.substr(0, name.size() - 2)];
+      for (uint8_t b = 0; b < size; ++b) {
+        const auto c = z3::select(expr, b).simplify().as_uint64();
+        assert(c <= std::numeric_limits<unsigned char>::max());
+        binary.push_back((unsigned char) c);
+        const auto& ident = name.substr(4, name.size() - 6);
+        if (name[name.size() - 1] == 'a')
+          test.outputs[ident].first = binary;
+        else
+          test.outputs[ident].second = binary;
+      }
+    }
+  }
+  this->diffTests.push_back(test);
+}
+
+void Executor::searchDifferentiators(ExecutionState* latest) {
+  std::string last_smt2_name = "smt2.XXXXXX";
+  auto last_smt2_fd = mkstemp(last_smt2_name.data());
+  assert(last_smt2_fd != -1);
+  const auto written = write(last_smt2_fd, latest->formula.c_str(),
+                             latest->formula.size());
+  assert(written == latest->formula.size());
+  close(last_smt2_fd);
+  for (const auto& state : this->exitStates) {
+    // TODO: skip moar and order
+    if (state->patchNo == latest->patchNo)
+      continue;
+
+    // File I/O is expensive but SMT solving is even more expensive (-;
+    // Seriously though, FIXME: implement symbdiff natively
+    std::string smt2_name = "smt2.XXXXXX";
+    auto smt2_fd = mkstemp(smt2_name.data());
+    assert(smt2_fd != -1);
+    const auto written = write(smt2_fd, state->formula.c_str(),
+                               state->formula.size());
+    assert(written == state->formula.size());
+    close(smt2_fd);
+
+    auto command = "symbdiff " + smt2_name + " " + last_smt2_name;
+    for (const auto& out : this->symOuts)
+      command += " " + std::to_string(out.second);
+    const auto pipe = popen(command.c_str(), "r");
+    std::string formula;
+    char buffer[128];
+    while (!feof(pipe))
+      if (fgets(buffer, 128, pipe) != NULL)
+        formula += buffer;
+    assert(pclose(pipe) == 0);
+    remove(smt2_name.c_str());
+
+    static z3::context c;
+    static z3::solver s {c};
+    s.reset();
+    s.from_string(formula.c_str());
+    if (s.check() != z3::sat)
+      continue;
+    this->extractDifferentiator(latest->patchNo, state->patchNo, s.get_model());
+    llvm::errs() << this->diffTests.back() << "\n";
+  }
+  remove(last_smt2_name.c_str());
+}
+
 void Executor::terminateStateOnExit(ExecutionState &state) {
   if (shouldWriteTest(state) || (AlwaysOutputSeeds && seedMap.count(&state)))
     interpreterHandler->processTestCase(
@@ -3644,6 +3726,7 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
 
   interpreterHandler->incPathsCompleted();
   getConstraintLog(state, state.formula, Interpreter::SMTLIB2);
+  searchDifferentiators(&state);
   exitStates.insert(&state);
   terminateState(state);
 }
@@ -4283,7 +4366,15 @@ void Executor::executeMakeSymbolic(ExecutionState &state,
     const Array *array = arrayCache.CreateArray(uniqueName, mo->size);
     bindObjectInState(state, mo, false, array);
     state.addSymbolic(mo, array);
-    
+
+    if (isSymArg(uniqueName)) {
+      assert(std::atoi(name.c_str() + 3) == this->symArgs.size());
+      this->symArgs.push_back(mo->size - 1); // string's null termination
+    } else if (isSymOut(uniqueName)) {
+      assert(this->symOuts.find(uniqueName) == this->symOuts.end());
+      this->symOuts[uniqueName] = mo->size;
+    }
+
     std::map< ExecutionState*, std::vector<SeedInfo> >::iterator it = 
       seedMap.find(&state);
     if (it!=seedMap.end()) { // In seed mode we need to add this as a
