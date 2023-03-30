@@ -218,6 +218,9 @@ public:
   /// @brief The objects handling the klee_open_merge calls this state ran through
   std::vector<ref<MergeHandler>> openMergeStack;
 
+  /// @ brief The patch number, starting from 1; 0 being the original.
+  std::uint64_t patchNo = 0;
+
   /// @brief The numbers of times this state has run through Executor::stepInstruction
   std::uint64_t steppedInstructions = 0;
 
