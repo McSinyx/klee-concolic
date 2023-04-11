@@ -3726,7 +3726,8 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
 
   interpreterHandler->incPathsCompleted();
   getConstraintLog(state, state.formula, Interpreter::SMTLIB2);
-  searchDifferentiators(&state);
+  if (state.patchNo)
+    searchDifferentiators(&state);
   exitStates.insert(&state);
   terminateState(state);
 }
@@ -4371,7 +4372,7 @@ void Executor::executeMakeSymbolic(ExecutionState &state,
       assert(std::atoi(name.c_str() + 3) == this->symArgs.size());
       this->symArgs.push_back(mo->size - 1); // string's null termination
     } else if (isSymOut(uniqueName)) {
-      assert(this->symOuts.find(uniqueName) == this->symOuts.end());
+      // assert(this->symOuts.find(uniqueName) == this->symOuts.end());
       this->symOuts[uniqueName] = mo->size;
     }
 

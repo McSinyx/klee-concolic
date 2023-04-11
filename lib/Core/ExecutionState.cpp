@@ -99,6 +99,8 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     cexPreferences(state.cexPreferences),
     arrayNames(state.arrayNames),
     openMergeStack(state.openMergeStack),
+    patchNo(state.patchNo),
+    formula(state.formula),
     steppedInstructions(state.steppedInstructions),
     instsSinceCovNew(state.instsSinceCovNew),
     unwindingInformation(state.unwindingInformation
