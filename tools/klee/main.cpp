@@ -64,7 +64,10 @@ using namespace klee;
 
 namespace {
   cl::opt<std::string>
-  InputFile(cl::desc("<input bytecode>"), cl::Positional, cl::init("-"));
+  InputFile(cl::desc("<input bytecode>"), cl::Positional, cl::Required);
+
+  cl::opt<std::string>
+  InputProgram(cl::desc("<input program>"), cl::Positional, cl::Required);
 
   cl::list<std::string>
   InputArgv(cl::ConsumeAfter,
@@ -1425,6 +1428,7 @@ int main(int argc, char **argv, char **envp) {
 
   externalsAndGlobalsCheck(finalModule);
 
+  interpreter->setProgram(InputProgram);
   if (ReplayPathFile != "") {
     interpreter->setReplayPath(&replayPath);
   }

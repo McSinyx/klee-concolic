@@ -221,6 +221,9 @@ public:
   /// @ brief The patch number, starting from 1; 0 being the original.
   std::uint64_t patchNo = 0;
 
+  /// @ brief Environment variable for runtime metaprogram switching.
+  std::string metaEnvVar = "";
+
   /// @ brief Terminated on exit, awaiting comparison.
   std::string formula = "";
 

@@ -100,6 +100,7 @@ ExecutionState::ExecutionState(const ExecutionState& state):
     arrayNames(state.arrayNames),
     openMergeStack(state.openMergeStack),
     patchNo(state.patchNo),
+    metaEnvVar(state.metaEnvVar),
     formula(state.formula),
     steppedInstructions(state.steppedInstructions),
     instsSinceCovNew(state.instsSinceCovNew),
@@ -350,35 +351,38 @@ void ExecutionState::dumpStack(llvm::raw_ostream &out) const {
   }
 }
 
-bool isMetaConstraint(ref<Expr> e) {
+std::string extractMetaEnvVar(ref<Expr> e) {
   if (e.get()->getKind() != Expr::Eq)
-    return false;
+    return "";
   const auto eq = dyn_cast<EqExpr>(e.get());
   if (eq->left.get()->getKind() != Expr::Constant)
-    return false;
+    return "";
   const auto constant = dyn_cast<ConstantExpr>(eq->left.get());
   if (constant->isFalse()) // the else branch
-    return isMetaConstraint(eq->right);
+    return extractMetaEnvVar(eq->right);
 
   if (eq->right.get()->getKind() != Expr::Concat)
-    return false;
+    return "";
   const auto concat = dyn_cast<ConcatExpr>(eq->right.get());
   if (concat->getLeft().get()->getKind() != Expr::Read)
-    return false;
+    return "";
 
   const auto read = dyn_cast<ReadExpr>(concat->getLeft().get());
   const auto& name = read->updates.root->name;
   // string::starts_with requires C++20
   if (name.substr(0, 8) != "__choose")
-    return false;
+    return "";
   for (const auto c : name.substr(8))
     if ('0' > c || c > '9')
-      return false;
-  return true;
+      return "";
+  std::string value;
+  constant->toString(value);
+  return "__SWITCH" + name.substr(8, name.size() - 8) + "=" + value;
 }
 
 void ExecutionState::addConstraint(ref<Expr> e) {
-  if (isMetaConstraint(e))
+  this->metaEnvVar = extractMetaEnvVar(e);
+  if (!this->metaEnvVar.empty())
     return;
   ConstraintManager c(constraints);
   c.addConstraint(e);

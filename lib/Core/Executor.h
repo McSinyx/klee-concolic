@@ -172,6 +172,9 @@ private:
   /// object.
   unsigned replayPosition;
 
+  /// Program path for concrete execution.
+  std::string concreteProgram;
+
   /// When non-null a list of "seed" inputs which will be used to
   /// drive execution.
   const std::vector<struct KTest *> *usingSeeds;  
@@ -523,6 +526,10 @@ public:
     assert(!replayKTest && "cannot replay both buffer and path");
     replayPath = path;
     replayPosition = 0;
+  }
+
+  void setProgram(const std::string& path) override {
+    this->concreteProgram = path;
   }
 
   llvm::Module *setModule(std::vector<std::unique_ptr<llvm::Module>> &modules,

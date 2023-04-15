@@ -128,6 +128,9 @@ public:
   // a user specified path. use null to reset.
   virtual void setReplayPath(const std::vector<bool> *path) = 0;
 
+  // supply path to the program for concrete execution.
+  virtual void setProgram(const std::string& path) = 0;
+
   // supply a set of symbolic bindings that will be used as "seeds"
   // for the search. use null to reset.
   virtual void useSeeds(const std::vector<struct KTest *> *seeds) = 0;

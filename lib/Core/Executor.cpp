@@ -88,6 +88,7 @@ typedef unsigned TypeSize;
 #include <iomanip>
 #include <iosfwd>
 #include <limits>
+#include <spawn.h>
 #include <sstream>
 #include <stdlib.h>
 #include <string>
@@ -3671,39 +3672,44 @@ void Executor::extractDifferentiator(uint64_t a, uint64_t b, const z3::model& m)
   this->diffTests.push_back(test);
 }
 
+std::string hash(std::string data) {
+  std::stringstream stream;
+  stream << std::hex << std::setw(16) << std::setfill('0')
+         << std::hash<std::string>{}(data);
+  return stream.str();
+}
+
 void Executor::searchDifferentiators(ExecutionState* latest) {
-  std::string last_smt2_name = "smt2.XXXXXX";
-  auto last_smt2_fd = mkstemp(last_smt2_name.data());
-  assert(last_smt2_fd != -1);
-  const auto written = write(last_smt2_fd, latest->formula.c_str(),
-                             latest->formula.size());
-  assert(written == latest->formula.size());
-  close(last_smt2_fd);
+  auto last_smt2_name = hash(latest->formula) + ".smt2";
+  std::ofstream last_smt2_file;
+  last_smt2_file.open(last_smt2_name);
+  last_smt2_file << latest->formula;
+  last_smt2_file.close();
   for (const auto& state : this->exitStates) {
     // TODO: skip moar and order
     if (state->patchNo == latest->patchNo)
       continue;
+    auto smt2_name = hash(state->formula) + ".smt2";
+    if (smt2_name == last_smt2_name)
+      continue;
 
     // File I/O is expensive but SMT solving is even more expensive (-;
     // Seriously though, FIXME: implement symbdiff natively
-    std::string smt2_name = "smt2.XXXXXX";
-    auto smt2_fd = mkstemp(smt2_name.data());
-    assert(smt2_fd != -1);
-    const auto written = write(smt2_fd, state->formula.c_str(),
-                               state->formula.size());
-    assert(written == state->formula.size());
-    close(smt2_fd);
+    std::ofstream smt2_file;
+    smt2_file.open(smt2_name);
+    smt2_file << state->formula;
+    smt2_file.close();
 
     auto command = "symbdiff " + smt2_name + " " + last_smt2_name;
     for (const auto& out : this->symOuts)
       command += " " + std::to_string(out.second);
-    const auto pipe = popen(command.c_str(), "r");
+    const auto out = popen(command.c_str(), "r");
     std::string formula;
     char buffer[128];
-    while (!feof(pipe))
-      if (fgets(buffer, 128, pipe) != NULL)
+    while (!feof(out))
+      if (fgets(buffer, 128, out) != NULL)
         formula += buffer;
-    assert(pclose(pipe) == 0);
+    assert(pclose(out) == 0);
     remove(smt2_name.c_str());
 
     static z3::context c;
@@ -3713,7 +3719,30 @@ void Executor::searchDifferentiators(ExecutionState* latest) {
     if (s.check() != z3::sat)
       continue;
     this->extractDifferentiator(latest->patchNo, state->patchNo, s.get_model());
-    llvm::errs() << this->diffTests.back() << "\n";
+    assert(!this->diffTests.empty());
+
+    pid_t pid;
+    std::vector<const char*> args {this->concreteProgram.c_str()};
+    uint8_t last = 0;
+    for (const auto& p : this->diffTests.back().args) {
+      assert(p.first == last);
+      args.push_back(p.second.c_str());
+      last++;
+    }
+    int fildes[2];
+    auto err = pipe(fildes);
+    if (err)
+      llvm::errs() << "failed creating pipe\n";
+    posix_spawn_file_actions_t action;
+    posix_spawn_file_actions_init(&action);
+    posix_spawn_file_actions_addclose(&action, fildes[0]);
+    posix_spawn_file_actions_adddup2(&action, fildes[1], 1);
+    char *const envp[] = {const_cast<char* const>(latest->metaEnvVar.c_str()),
+                          NULL};
+    auto status = posix_spawn(&pid, this->concreteProgram.c_str(),
+                              &action, NULL,
+                              const_cast<char* const *>(args.data()), envp);
+    break;
   }
   remove(last_smt2_name.c_str());
 }
@@ -3726,8 +3755,7 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
 
   interpreterHandler->incPathsCompleted();
   getConstraintLog(state, state.formula, Interpreter::SMTLIB2);
-  if (state.patchNo)
-    searchDifferentiators(&state);
+  searchDifferentiators(&state);
   exitStates.insert(&state);
   terminateState(state);
 }
