@@ -3441,6 +3441,9 @@ void Executor::doDumpStates() {
   for (const auto &state : states)
     terminateStateEarly(*state, "Execution halting.", StateTerminationType::Interrupted);
   updateStates(nullptr);
+
+  for (const auto& t : this->diffTests)
+    llvm::errs() << t << '\n';
 }
 
 void Executor::run(ExecutionState &initialState) {
@@ -3639,16 +3642,17 @@ static std::string terminationTypeFileExtension(StateTerminationType type) {
   return ret;
 };
 
-void Executor::extractDifferentiator(uint64_t a, uint64_t b, const z3::model& m) {
-  auto test = Differentiator {a, b};
+void Executor::extractDifferentiator(ExecutionState* a, ExecutionState* b,
+                                     const z3::model& m) {
+  auto test = Differentiator {a->patchNo, b->patchNo};
   for (auto k = m.size(); k--;) {
     const auto& name = m[k].name().str();
     if (isSymArg(name)) {
       const uint8_t i = std::atoi(name.c_str() + 3);
       test.args[i] = "";
       const auto& expr = m.eval(m[k]());
-      for (uint8_t b = 0; b < this->symArgs[i]; ++b) {
-        const auto c = z3::select(expr, b).simplify().as_uint64();
+      for (uint8_t i = 0; i < this->symArgs[i]; ++i) {
+        const auto c = z3::select(expr, i).simplify().as_uint64();
         assert(c <= std::numeric_limits<unsigned char>::max());
         test.args[i].push_back((unsigned char) c);
       }
@@ -3657,8 +3661,8 @@ void Executor::extractDifferentiator(uint64_t a, uint64_t b, const z3::model& m)
       const auto& expr = m.eval(m[k]());
       std::string binary {""};
       const auto size = this->symOuts[name.substr(0, name.size() - 2)];
-      for (uint8_t b = 0; b < size; ++b) {
-        const auto c = z3::select(expr, b).simplify().as_uint64();
+      for (uint8_t i = 0; i < size; ++i) {
+        const auto c = z3::select(expr, i).simplify().as_uint64();
         assert(c <= std::numeric_limits<unsigned char>::max());
         binary.push_back((unsigned char) c);
         const auto& ident = name.substr(4, name.size() - 6);
@@ -3668,6 +3672,44 @@ void Executor::extractDifferentiator(uint64_t a, uint64_t b, const z3::model& m)
           test.outputs[ident].second = binary;
       }
     }
+  }
+  llvm::errs() << test << '\n';
+
+  char buffer[128];
+  for (auto& rev : this->metaEnvVars) {
+    auto& envs = rev.second;
+    pid_t pid;
+    std::vector<const char*> args {this->concreteProgram.c_str()};
+    uint8_t last = 0;
+    for (const auto& p : test.args) {
+      assert(p.first == last);
+      args.push_back(p.second.c_str());
+      last++;
+    }
+    args.push_back(NULL);
+
+    int fildes[2];
+    auto err = pipe(fildes);
+    assert(!err);
+    posix_spawn_file_actions_t action;
+    posix_spawn_file_actions_init(&action);
+    posix_spawn_file_actions_addclose(&action, fildes[0]);
+    posix_spawn_file_actions_adddup2(&action, fildes[1], 1);
+    char *const envp[] = {const_cast<char* const>(envs.c_str()), NULL};
+    err = posix_spawn(&pid, this->concreteProgram.c_str(), &action, NULL,
+                      const_cast<char* const *>(args.data()),
+                      envs.empty() ? NULL : envp);
+    assert(!err);
+    close(fildes[1]);
+    std::string out = "";
+    for (ssize_t n; n = read(fildes[0], buffer, 127);) {
+      assert(n >= 0);
+      buffer[n] = 0;
+      out += buffer;
+    }
+    test.stdouts[rev.first] = out;
+    llvm::errs() << "rev " << rev.first << ' ' << out;
+    posix_spawn_file_actions_destroy(&action);
   }
   this->diffTests.push_back(test);
 }
@@ -3703,14 +3745,15 @@ void Executor::searchDifferentiators(ExecutionState* latest) {
     auto command = "symbdiff " + smt2_name + " " + last_smt2_name;
     for (const auto& out : this->symOuts)
       command += " " + std::to_string(out.second);
-    const auto out = popen(command.c_str(), "r");
+    const auto out = popen((command + " 2> /dev/null").c_str(), "r");
     std::string formula;
     char buffer[128];
     while (!feof(out))
-      if (fgets(buffer, 128, out) != NULL)
+      if (fgets(buffer, 127, out) != NULL)
         formula += buffer;
-    assert(pclose(out) == 0);
     remove(smt2_name.c_str());
+    if (pclose(out))
+      continue;
 
     static z3::context c;
     static z3::solver s {c};
@@ -3718,30 +3761,8 @@ void Executor::searchDifferentiators(ExecutionState* latest) {
     s.from_string(formula.c_str());
     if (s.check() != z3::sat)
       continue;
-    this->extractDifferentiator(latest->patchNo, state->patchNo, s.get_model());
+    this->extractDifferentiator(latest, state, s.get_model());
     assert(!this->diffTests.empty());
-
-    pid_t pid;
-    std::vector<const char*> args {this->concreteProgram.c_str()};
-    uint8_t last = 0;
-    for (const auto& p : this->diffTests.back().args) {
-      assert(p.first == last);
-      args.push_back(p.second.c_str());
-      last++;
-    }
-    int fildes[2];
-    auto err = pipe(fildes);
-    if (err)
-      llvm::errs() << "failed creating pipe\n";
-    posix_spawn_file_actions_t action;
-    posix_spawn_file_actions_init(&action);
-    posix_spawn_file_actions_addclose(&action, fildes[0]);
-    posix_spawn_file_actions_adddup2(&action, fildes[1], 1);
-    char *const envp[] = {const_cast<char* const>(latest->metaEnvVar.c_str()),
-                          NULL};
-    auto status = posix_spawn(&pid, this->concreteProgram.c_str(),
-                              &action, NULL,
-                              const_cast<char* const *>(args.data()), envp);
     break;
   }
   remove(last_smt2_name.c_str());
@@ -3754,6 +3775,7 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
         terminationTypeFileExtension(StateTerminationType::Exit).c_str());
 
   interpreterHandler->incPathsCompleted();
+  metaEnvVars[state.patchNo] = state.metaEnvVar;
   getConstraintLog(state, state.formula, Interpreter::SMTLIB2);
   searchDifferentiators(&state);
   exitStates.insert(&state);

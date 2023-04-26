@@ -381,9 +381,12 @@ std::string extractMetaEnvVar(ref<Expr> e) {
 }
 
 void ExecutionState::addConstraint(ref<Expr> e) {
-  this->metaEnvVar = extractMetaEnvVar(e);
-  if (!this->metaEnvVar.empty())
+  auto v = extractMetaEnvVar(e);
+  if (!v.empty()) {
+    if (v.substr(v.size() - 2) != "=0")
+      this->metaEnvVar = v;
     return;
+  }
   ConstraintManager c(constraints);
   c.addConstraint(e);
 }

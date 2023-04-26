@@ -30,10 +30,14 @@ bool isSymArg(std::string);
 bool isSymOut(std::string);
 
 struct Differentiator {
-  uint64_t revA, revB;
-  std::map<uint8_t, std::string> args;
+  std::uint64_t revA, revB;
+  // arg_k => v
+  std::map<std::uint8_t, std::string> args;
+  // k => (out!k!a, out!k!b)
   std::map<std::string, std::pair<std::string, std::string>> outputs;
-  Differentiator(uint64_t a, uint64_t b) : revA{a}, revB{b} {}
+  // rev => stdout
+  std::map<std::uint64_t, std::string> stdouts;
+  Differentiator(std::uint64_t a, std::uint64_t b) : revA{a}, revB{b} {}
 };
 
 /// Write convenient representation for debugging

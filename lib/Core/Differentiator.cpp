@@ -34,7 +34,7 @@ std::string quoted(const std::string& s) {
   return ss.str();
 }
 
-inline char hex(char c) {
+inline char hex(unsigned char c) {
     return (c < 10) ? '0' + c : 'a' + c - 10;
 }
 

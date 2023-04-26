@@ -117,6 +117,7 @@ private:
   MemoryManager *memory;
   std::set<ExecutionState*, ExecutionStateIDCompare> states;
   std::set<ExecutionState*, ExecutionStateIDCompare> exitStates;
+  std::map<std::uint64_t, std::string> metaEnvVars;
   std::vector<Differentiator> diffTests;
   StatsTracker *statsTracker;
   TreeStreamWriter *pathWriter, *symPathWriter;
@@ -426,7 +427,8 @@ private:
       llvm::Instruction** lastInstruction);
 
   /// Extract differencial test from SMT model
-  void extractDifferentiator(uint64_t, uint64_t, const z3::model&);
+  void extractDifferentiator(ExecutionState*, ExecutionState*,
+                             const z3::model&);
 
   /// Compare with other exit states for possible differencial tests
   void searchDifferentiators(ExecutionState *state);
