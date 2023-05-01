@@ -3442,8 +3442,34 @@ void Executor::doDumpStates() {
     terminateStateEarly(*state, "Execution halting.", StateTerminationType::Interrupted);
   updateStates(nullptr);
 
-  for (const auto& t : this->diffTests)
-    llvm::errs() << t << '\n';
+  std::set<uint64_t> revs;
+  for (const auto& p : this->metaEnvVars)
+    revs.insert(p.first);
+  for (const auto& t : this->diffTests) {
+    std::map<std::string, std::set<std::uint64_t>> stdoutClusters;
+    std::map<std::pair<std::string, std::string>,
+             std::set<std::uint64_t>> varClusters;
+    if (t.second.size() < this->metaEnvVars.size())
+      continue;
+    for (const auto& rev : t.second) {
+      for (const auto& var : rev.second.first)
+        varClusters[var].insert(rev.first);
+      stdoutClusters[rev.second.second].insert(rev.first);
+      if (stdoutClusters.size() > 1) {
+        llvm::errs() << "Args:";
+        for (const auto& s : t.first)
+          llvm::errs() << " \"" << s << '"';
+        llvm::errs() << '\n';
+        int i = 0;
+        for (const auto& so : stdoutClusters) {
+          llvm::errs() << i++ << " " << so.first;
+          for (const auto& r : so.second)
+            llvm::errs() << " " << r;
+          llvm::errs() << '\n';
+        }
+      }
+    }
+  }
 }
 
 void Executor::run(ExecutionState &initialState) {
@@ -3644,17 +3670,18 @@ static std::string terminationTypeFileExtension(StateTerminationType type) {
 
 void Executor::extractDifferentiator(ExecutionState* a, ExecutionState* b,
                                      const z3::model& m) {
-  auto test = Differentiator {a->patchNo, b->patchNo};
+  std::map<std::uint8_t, std::string> args;
+  Executor::TestOuts outputs;
   for (auto k = m.size(); k--;) {
     const auto& name = m[k].name().str();
     if (isSymArg(name)) {
       const uint8_t i = std::atoi(name.c_str() + 3);
-      test.args[i] = "";
+      args[i] = "";
       const auto& expr = m.eval(m[k]());
       for (uint8_t i = 0; i < this->symArgs[i]; ++i) {
         const auto c = z3::select(expr, i).simplify().as_uint64();
         assert(c <= std::numeric_limits<unsigned char>::max());
-        test.args[i].push_back((unsigned char) c);
+        args[i].push_back((unsigned char) c);
       }
     } else if (isSymOut(name.substr(0, name.size() - 2))) {
       // TODO: use arguments for all patches
@@ -3665,28 +3692,27 @@ void Executor::extractDifferentiator(ExecutionState* a, ExecutionState* b,
         const auto c = z3::select(expr, i).simplify().as_uint64();
         assert(c <= std::numeric_limits<unsigned char>::max());
         binary.push_back((unsigned char) c);
-        const auto& ident = name.substr(4, name.size() - 6);
-        if (name[name.size() - 1] == 'a')
-          test.outputs[ident].first = binary;
-        else
-          test.outputs[ident].second = binary;
       }
+      const auto rev = ((name[name.size() - 1] == 'a') ? a : b)->patchNo;
+      outputs[rev].first[name.substr(4, name.size() - 6)] = binary;
     }
   }
-  llvm::errs() << test << '\n';
+  Executor::TestArgs argv;
+  uint8_t last = 0;
+  for (const auto& p : args) {
+    assert(p.first == last);
+    argv.push_back(p.second);
+    last++;
+  }
 
   char buffer[128];
-  for (auto& rev : this->metaEnvVars) {
+  for (const auto& rev : this->metaEnvVars) {
     auto& envs = rev.second;
     pid_t pid;
-    std::vector<const char*> args {this->concreteProgram.c_str()};
-    uint8_t last = 0;
-    for (const auto& p : test.args) {
-      assert(p.first == last);
-      args.push_back(p.second.c_str());
-      last++;
-    }
-    args.push_back(NULL);
+    std::vector<const char*> argp {this->concreteProgram.c_str()};
+    for (const auto& s : argv)
+      argp.push_back(s.c_str());
+    argp.push_back(NULL);
 
     int fildes[2];
     auto err = pipe(fildes);
@@ -3697,7 +3723,7 @@ void Executor::extractDifferentiator(ExecutionState* a, ExecutionState* b,
     posix_spawn_file_actions_adddup2(&action, fildes[1], 1);
     char *const envp[] = {const_cast<char* const>(envs.c_str()), NULL};
     err = posix_spawn(&pid, this->concreteProgram.c_str(), &action, NULL,
-                      const_cast<char* const *>(args.data()),
+                      const_cast<char* const *>(argp.data()),
                       envs.empty() ? NULL : envp);
     assert(!err);
     close(fildes[1]);
@@ -3707,11 +3733,10 @@ void Executor::extractDifferentiator(ExecutionState* a, ExecutionState* b,
       buffer[n] = 0;
       out += buffer;
     }
-    test.stdouts[rev.first] = out;
-    llvm::errs() << "rev " << rev.first << ' ' << out;
+    outputs[rev.first].second = out;
     posix_spawn_file_actions_destroy(&action);
   }
-  this->diffTests.push_back(test);
+  this->diffTests[argv] = outputs;
 }
 
 std::string hash(std::string data) {

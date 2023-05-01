@@ -23,16 +23,10 @@
 
 namespace klee {  
 
-/// Return if name matches arg\d\d
-bool isSymArg(std::string);
-
-/// Return if name matches out!.*\d
-bool isSymOut(std::string);
-
 struct Differentiator {
   std::uint64_t revA, revB;
   // arg_k => v
-  std::map<std::uint8_t, std::string> args;
+  std::vector<std::string> args;
   // k => (out!k!a, out!k!b)
   std::map<std::string, std::pair<std::string, std::string>> outputs;
   // rev => stdout

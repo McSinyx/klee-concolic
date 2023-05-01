@@ -270,4 +270,17 @@ namespace klee {
     llvm_unreachable("Unsupported expression in evalConstantExpr");
     return op1;
   }
+
+  bool isSymArg(std::string name) {
+    return (name.size() == 5 // string::starts_with requires C++20
+            && name[0] == 'a' && name[1] == 'r' && name[2] == 'g'
+            && '0' <= name[3] && name[3] <= '9'
+            && '0' <= name[4] && name[4] <= '9');
+  }
+
+  bool isSymOut(std::string name) {
+    // string::starts_with requires C++20
+    return (name[0] == 'o' && name[1] == 'u' && name[2] == 't' && name[3] == '!'
+            && '0' <= name[name.size() - 1] && name[name.size() - 1] <= '9');
+  }
 }

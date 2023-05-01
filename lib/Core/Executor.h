@@ -15,7 +15,6 @@
 #ifndef KLEE_EXECUTOR_H
 #define KLEE_EXECUTOR_H
 
-#include "Differentiator.h"
 #include "ExecutionState.h"
 #include "UserSearcher.h"
 
@@ -108,6 +107,12 @@ public:
   RNG theRNG;
 
 private:
+  typedef std::vector<std::string> TestArgs;
+  /// :rev (:var val) stdout
+  typedef std::map<std::uint64_t,
+                   std::pair<std::map<std::string, std::string>,
+                             std::string>> TestOuts;
+
   std::unique_ptr<KModule> kmodule;
   InterpreterHandler *interpreterHandler;
   Searcher *searcher;
@@ -118,7 +123,7 @@ private:
   std::set<ExecutionState*, ExecutionStateIDCompare> states;
   std::set<ExecutionState*, ExecutionStateIDCompare> exitStates;
   std::map<std::uint64_t, std::string> metaEnvVars;
-  std::vector<Differentiator> diffTests;
+  std::map<TestArgs, TestOuts> diffTests;
   StatsTracker *statsTracker;
   TreeStreamWriter *pathWriter, *symPathWriter;
   SpecialFunctionHandler *specialFunctionHandler;
@@ -580,7 +585,12 @@ public:
   MergingSearcher *getMergingSearcher() const { return mergingSearcher; };
   void setMergingSearcher(MergingSearcher *ms) { mergingSearcher = ms; };
 };
-  
+
+/// Return if name matches arg\d\d
+bool isSymArg(std::string);
+
+/// Return if name matches out!.*\d
+bool isSymOut(std::string);
 } // End klee namespace
 
 #endif /* KLEE_EXECUTOR_H */
