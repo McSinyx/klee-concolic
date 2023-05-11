@@ -3736,7 +3736,27 @@ void Executor::extractDifferentiator(ExecutionState* a, ExecutionState* b,
     outputs[rev.first].second = out;
     posix_spawn_file_actions_destroy(&action);
   }
+  //const auto& p = this->diffTests.insert(std::make_pair(argv, outputs));
   this->diffTests[argv] = outputs;
+  // :var :val cluster
+  std::map<std::string, std::map<std::string, std::set<std::uint64_t>>> revOut;
+  for (auto& o : outputs) {
+    for (auto& var : o.second.first)
+      revOut[var.first][var.second].insert(o.first);
+    revOut[""][o.second.second].insert(o.first); // stdout
+  }
+
+  for (auto& vp : revOut)
+    for (auto& p : vp.second)
+      for (auto& q : vp.second) {
+        if (&p == &q)
+          continue;
+        for (std::uint64_t i : p.second)
+          for (std::uint64_t j : q.second)
+            if (i < j)
+              this->decided.emplace(std::make_pair(i, j),
+                                    &this->diffTests[argv]);
+      }
 }
 
 std::string hash(std::string data) {
@@ -3752,43 +3772,62 @@ void Executor::searchDifferentiators(ExecutionState* latest) {
   last_smt2_file.open(last_smt2_name);
   last_smt2_file << latest->formula;
   last_smt2_file.close();
-  for (const auto& state : this->exitStates) {
-    // TODO: skip moar and order
-    if (state->patchNo == latest->patchNo)
-      continue;
-    auto smt2_name = hash(state->formula) + ".smt2";
-    if (smt2_name == last_smt2_name)
-      continue;
 
-    // File I/O is expensive but SMT solving is even more expensive (-;
-    // Seriously though, FIXME: implement symbdiff natively
-    std::ofstream smt2_file;
-    smt2_file.open(smt2_name);
-    smt2_file << state->formula;
-    smt2_file.close();
-
-    auto command = "symbdiff " + smt2_name + " " + last_smt2_name;
-    for (const auto& out : this->symOuts)
-      command += " " + std::to_string(out.second);
-    const auto out = popen((command + " 2> /dev/null").c_str(), "r");
-    std::string formula;
-    char buffer[128];
-    while (!feof(out))
-      if (fgets(buffer, 127, out) != NULL)
-        formula += buffer;
-    remove(smt2_name.c_str());
-    if (pclose(out))
+  std::hash<std::string> hashFn;
+  for (const auto& rev : this->exitStates) {
+    if (rev.first == latest->patchNo)
       continue;
+    if (rev.first < latest->patchNo) {
+      if (this->decided.find(std::make_pair(rev.first, latest->patchNo))
+          != this->decided.end())
+        continue;
+    } else {
+      if (this->decided.find(std::make_pair(latest->patchNo, rev.first))
+          != this->decided.end())
+        continue;
+    }
+    for (const auto& state : rev.second) {
+      auto hashPair = std::make_pair(hashFn(state->formula),
+                                     hashFn(latest->formula));
+      if (hashPair.first == hashPair.second || this->compared[hashPair])
+        continue;
+      this->compared[hashPair] = true;
+      hashPair = {hashFn(latest->formula), hashFn(state->formula)};
+      if (this->compared[hashPair])
+        continue;
+      this->compared[hashPair] = true;
 
-    static z3::context c;
-    static z3::solver s {c};
-    s.reset();
-    s.from_string(formula.c_str());
-    if (s.check() != z3::sat)
-      continue;
-    this->extractDifferentiator(latest, state, s.get_model());
-    assert(!this->diffTests.empty());
-    break;
+      // File I/O is expensive but SMT solving is even more expensive (-;
+      // Seriously though, FIXME: implement symbdiff natively
+      const auto& smt2_name = hash(state->formula) + ".smt2";
+      std::ofstream smt2_file;
+      smt2_file.open(smt2_name);
+      smt2_file << state->formula;
+      smt2_file.close();
+
+      auto command = "symbdiff " + smt2_name + " " + last_smt2_name;
+      for (const auto& out : this->symOuts)
+        command += " " + std::to_string(out.second);
+      const auto out = popen((command + " 2> /dev/null").c_str(), "r");
+      std::string formula;
+      char buffer[128];
+      while (!feof(out))
+        if (fgets(buffer, 127, out) != NULL)
+          formula += buffer;
+      remove(smt2_name.c_str());
+      if (pclose(out))
+        continue;
+
+      static z3::context c;
+      static z3::solver s {c};
+      s.reset();
+      s.from_string(formula.c_str());
+      if (s.check() != z3::sat)
+        continue;
+      this->extractDifferentiator(latest, state, s.get_model());
+      assert(!this->diffTests.empty());
+      break;
+    }
   }
   remove(last_smt2_name.c_str());
 }
@@ -3802,8 +3841,8 @@ void Executor::terminateStateOnExit(ExecutionState &state) {
   interpreterHandler->incPathsCompleted();
   metaEnvVars[state.patchNo] = state.metaEnvVar;
   getConstraintLog(state, state.formula, Interpreter::SMTLIB2);
-  searchDifferentiators(&state);
-  exitStates.insert(&state);
+  if (exitStates[state.patchNo].insert(&state).second)
+    searchDifferentiators(&state);
   terminateState(state);
 }
 

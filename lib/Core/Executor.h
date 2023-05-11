@@ -121,9 +121,13 @@ private:
   TimingSolver *solver;
   MemoryManager *memory;
   std::set<ExecutionState*, ExecutionStateIDCompare> states;
-  std::set<ExecutionState*, ExecutionStateIDCompare> exitStates;
+  std::map<std::uint64_t,
+           std::set<ExecutionState*,
+                    ExecutionStateFormulaCompare>> exitStates;
   std::map<std::uint64_t, std::string> metaEnvVars;
   std::map<TestArgs, TestOuts> diffTests;
+  std::map<std::pair<std::uint64_t, std::uint64_t>, TestOuts*> decided;
+  std::map<std::pair<std::size_t, std::size_t>, bool> compared;
   StatsTracker *statsTracker;
   TreeStreamWriter *pathWriter, *symPathWriter;
   SpecialFunctionHandler *specialFunctionHandler;

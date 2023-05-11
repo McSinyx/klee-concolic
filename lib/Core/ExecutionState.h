@@ -287,6 +287,12 @@ struct ExecutionStateIDCompare {
     return a->getID() < b->getID();
   }
 };
+
+struct ExecutionStateFormulaCompare {
+  bool operator()(const ExecutionState *a, const ExecutionState *b) const {
+    return a->formula < b->formula;
+  }
+};
 }
 
 #endif /* KLEE_EXECUTIONSTATE_H */
